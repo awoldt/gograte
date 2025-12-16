@@ -18,37 +18,53 @@ func main() {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 
 			dbDriver := cmd.String("driver")
-			targetDb := cmd.String("target-host")
 			database := cmd.String("database")
-			user := cmd.String("user")
-			sourcedb := cmd.String("source-host")
 
-			validCommand := ValidCommand(dbDriver, targetDb, database, user, sourcedb)
-			if validCommand != nil {
-				return fmt.Errorf(validCommand.Error())
-			}
+			targetDb := cmd.String("target-db")
+			targetUser := cmd.String("target-user")
+			targetPassword := cmd.String("target-password")
+			targetPort := cmd.String("target-port")
 
-			password := cmd.String("password") // dont always needs password so define here
+			sourcedb := cmd.String("source-db")
+			sourceUser := cmd.String("source-user")
+			sourcePassword := cmd.String("source-password")
+			sourcePort := cmd.String("source-port")
+
+			fmt.Printf(`
+		Config used:
+		- database driver -> "%v"
+		- database -> "%v"
+		- target-db -> "%v"
+		- target-user -> "%v"
+		- target-password -> "%v"
+		- target-port -> "%v"
+		- source-db -> "%v"
+		- source-user -> "%v"
+		- source-password -> "%v"
+		- source-port -> "%v"
+		`, dbDriver, database, targetDb, targetUser, targetPassword, targetPort, sourcedb, sourceUser, sourcePassword, sourcePort)
 
 			switch dbDriver {
 			case "postgres":
 				{
-					sourceDbConn, err := postgres.ConnetToPostgres(sourcedb, database, user, password)
+					sourceDbConn, err := postgres.ConnetToPostgres(sourcedb, database, sourceUser, sourcePassword, sourcePort)
 					if err != nil {
 						return fmt.Errorf(err.Error())
 					}
 					defer sourceDbConn.Close(ctx) // CLOSE THIS FUKCIN THING
 
-					targetDbConn, err := postgres.ConnetToPostgres(targetDb, database, user, password)
+					targetDbConn, err := postgres.ConnetToPostgres(targetDb, database, targetUser, targetPassword, targetPort)
 					if err != nil {
 						return fmt.Errorf(err.Error())
 					}
 					defer targetDbConn.Close(ctx) // CLOSE THIS FUKCIN THING
 
-					_, err = postgres.ListAllTables(sourceDbConn, ctx)
+					tables, err := postgres.GetTables(sourceDbConn, ctx)
 					if err != nil {
 						return fmt.Errorf(err.Error())
 					}
+
+					fmt.Printf("there are %v tables in the source database", len(tables))
 
 					break
 				}

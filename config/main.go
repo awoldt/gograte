@@ -16,10 +16,12 @@ var flags []StringFlagType = []StringFlagType{
 	{name: "target-db", usage: "Database that will updated"},
 	{name: "target-user", usage: "Database user value"},
 	{name: "target-password", usage: "Database password value"},
+	{name: "target-port", usage: "Database port"},
 
 	{name: "source-db", usage: "The database that will have the schemas read from (what you want to clone)"},
 	{name: "source-user", usage: "Database user value"},
 	{name: "source-password", usage: "Database password value"},
+	{name: "source-port", usage: "Database port"},
 }
 
 func InitiateFlags() []cli.Flag {

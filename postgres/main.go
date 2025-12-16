@@ -8,6 +8,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+type TablesQueryResponse struct {
+	Tablename string `db:"tablename"`
+}
+
 func ConnetToPostgres(host, database, user, password string) (*pgx.Conn, error) {
 	if host == "" || database == "" || user == "" {
 		return nil, fmt.Errorf("Must supply a host, database, and user")
@@ -16,12 +20,9 @@ func ConnetToPostgres(host, database, user, password string) (*pgx.Conn, error) 
 
 	if password == "" {
 		connectionString = fmt.Sprintf("postgres://%v@%v/%v", user, host, database)
-
 	} else {
 		encodedPwd := url.QueryEscape(password)
-
 		connectionString = fmt.Sprintf("postgres://%v:%v@%v/%v", user, encodedPwd, host, database)
-
 	}
 
 	connectionConfig, err := pgx.ParseConfig(connectionString)
@@ -36,4 +37,24 @@ func ConnetToPostgres(host, database, user, password string) (*pgx.Conn, error) 
 	}
 
 	return conn, nil
+}
+
+func ListAllTables(conn *pgx.Conn, ctx context.Context) ([]*TablesQueryResponse, error) {
+
+	tablesQuery, err := conn.Query(ctx, "SELECT tablename FROM pg_tables WHERE schemaname = 'public';")
+
+	if err != nil {
+		return nil, fmt.Errorf(err.Error())
+	}
+
+	tables, err := pgx.CollectRows(tablesQuery, pgx.RowToAddrOfStructByName[TablesQueryResponse])
+	if err != nil {
+		return nil, fmt.Errorf(err.Error())
+	}
+
+	for _, table := range tables {
+		fmt.Println(table.Tablename)
+	}
+
+	return tables, nil
 }

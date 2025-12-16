@@ -18,11 +18,12 @@ func main() {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 
 			dbDriver := cmd.String("driver")
-			host := cmd.String("host")
+			targetDb := cmd.String("target-host")
 			database := cmd.String("database")
 			user := cmd.String("user")
+			sourcedb := cmd.String("source-host")
 
-			validCommand := ValidCommand(dbDriver, host, database, user)
+			validCommand := ValidCommand(dbDriver, targetDb, database, user, sourcedb)
 			if validCommand != nil {
 				return fmt.Errorf(validCommand.Error())
 			}
@@ -32,13 +33,22 @@ func main() {
 			switch dbDriver {
 			case "postgres":
 				{
-					conn, err := postgres.ConnetToPostgres(host, database, user, password)
+					sourceDbConn, err := postgres.ConnetToPostgres(sourcedb, database, user, password)
 					if err != nil {
 						return fmt.Errorf(err.Error())
 					}
+					defer sourceDbConn.Close(ctx) // CLOSE THIS FUKCIN THING
 
-					// CLOSE THIS FUKCIN THING
-					defer conn.Close(ctx)
+					targetDbConn, err := postgres.ConnetToPostgres(targetDb, database, user, password)
+					if err != nil {
+						return fmt.Errorf(err.Error())
+					}
+					defer targetDbConn.Close(ctx) // CLOSE THIS FUKCIN THING
+
+					_, err = postgres.ListAllTables(sourceDbConn, ctx)
+					if err != nil {
+						return fmt.Errorf(err.Error())
+					}
 
 					break
 				}

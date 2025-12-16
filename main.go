@@ -7,6 +7,7 @@ import (
 	"gograte/postgres"
 	"log"
 	"os"
+	"time"
 
 	"github.com/urfave/cli/v3"
 )
@@ -59,18 +60,25 @@ func main() {
 					}
 					defer targetDbConn.Close(ctx) // CLOSE THIS FUKCIN THING
 
-					tables, err := postgres.GetTables(sourceDbConn, ctx)
+					startTime := time.Now()
+
+					// get the number of tables for both the source and target database
+					_, err = postgres.GetTables(sourceDbConn, ctx)
+					if err != nil {
+						return fmt.Errorf(err.Error())
+					}
+					_, err = postgres.GetTables(targetDbConn, ctx)
 					if err != nil {
 						return fmt.Errorf(err.Error())
 					}
 
-					fmt.Printf("there are %v tables in the source database", len(tables))
+					fmt.Printf("Finished in %v seconds", time.Since(startTime))
 
 					break
 				}
 			}
 
-			fmt.Println("DONE!")
+			fmt.Println("\n\nDONE!")
 
 			return nil
 		},

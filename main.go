@@ -34,8 +34,9 @@ func main() {
 
 			replace := cmd.String("replace") // optional, will delete this database locally and replace with the sources structure (DEFAULT)
 
-			s := spinner.New(spinner.CharSets[2], 100*time.Millisecond) // Build our new spinner
+			s := spinner.New(spinner.CharSets[2], 100*time.Millisecond)
 			s.Start()
+			defer s.Stop()
 
 			switch dbDriver {
 			case "postgres":
@@ -75,8 +76,6 @@ func main() {
 					} else {
 						return fmt.Errorf("must provide replace")
 					}
-
-					s.Stop()
 
 					fmt.Printf("\nFinished in %v seconds", time.Since(startTime))
 					break

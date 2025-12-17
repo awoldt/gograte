@@ -22,6 +22,8 @@ var flags []StringFlagType = []StringFlagType{
 	{name: "source-user", usage: "Database user value"},
 	{name: "source-password", usage: "Database password value"},
 	{name: "source-port", usage: "Database port"},
+
+	{name: "replace", usage: "Delete and recreate target database (optional, DEFAULT behavior)"},
 }
 
 func InitiateFlags() []cli.Flag {

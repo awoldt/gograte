@@ -31,18 +31,20 @@ func main() {
 			sourcePassword := cmd.String("source-password")
 			sourcePort := cmd.String("source-port")
 
+			replace := cmd.String("replace") // optional, will delete this database locally and replace with the sources structure (DEFAULT)
+
 			fmt.Printf(`
-		Config used:
-		- database driver -> "%v"
-		- database -> "%v"
-		- target-db -> "%v"
-		- target-user -> "%v"
-		- target-password -> "%v"
-		- target-port -> "%v"
-		- source-db -> "%v"
-		- source-user -> "%v"
-		- source-password -> "%v"
-		- source-port -> "%v"
+Config used:
+- database driver -> "%v"
+- database -> "%v"
+- target-db -> "%v"
+- target-user -> "%v"
+- target-password -> "%v"
+- target-port -> "%v"
+- source-db -> "%v"
+- source-user -> "%v"
+- source-password -> "%v"
+- source-port -> "%v"
 		`, dbDriver, database, targetDb, targetUser, targetPassword, targetPort, sourcedb, sourceUser, sourcePassword, sourcePort)
 
 			switch dbDriver {
@@ -70,6 +72,15 @@ func main() {
 					_, err = postgres.GetTables(targetDbConn, ctx)
 					if err != nil {
 						return fmt.Errorf(err.Error())
+					}
+
+					if replace == "true" {
+						err := postgres.ReplaceDatabase(sourceDbConn, ctx)
+						if err != nil {
+							return fmt.Errorf(err.Error())
+						}
+					} else {
+						return fmt.Errorf("must provide replace")
 					}
 
 					fmt.Printf("Finished in %v seconds", time.Since(startTime))

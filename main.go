@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/briandowns/spinner"
 	"github.com/urfave/cli/v3"
 )
 
@@ -33,23 +34,13 @@ func main() {
 
 			replace := cmd.String("replace") // optional, will delete this database locally and replace with the sources structure (DEFAULT)
 
-			fmt.Printf(`
-Config used:
-- database driver -> "%v"
-- database -> "%v"
-- target-db -> "%v"
-- target-user -> "%v"
-- target-password -> "%v"
-- target-port -> "%v"
-- source-db -> "%v"
-- source-user -> "%v"
-- source-password -> "%v"
-- source-port -> "%v"
-		`, dbDriver, database, targetDb, targetUser, targetPassword, targetPort, sourcedb, sourceUser, sourcePassword, sourcePort)
+			s := spinner.New(spinner.CharSets[2], 100*time.Millisecond) // Build our new spinner
+			s.Start()
 
 			switch dbDriver {
 			case "postgres":
 				{
+					s.Suffix = " loading postgres driver"
 					sourceDbConn, err := postgres.ConnetToPostgres(sourcedb, database, sourceUser, sourcePassword, sourcePort)
 					if err != nil {
 						return fmt.Errorf(err.Error())
@@ -64,6 +55,8 @@ Config used:
 
 					startTime := time.Now()
 
+					s.Suffix = " getting table details"
+
 					// get the number of tables for both the source and target database
 					_, err = postgres.GetTables(sourceDbConn, ctx)
 					if err != nil {
@@ -75,7 +68,7 @@ Config used:
 					}
 
 					if replace == "true" {
-						err := postgres.ReplaceDatabase(sourceDbConn, targetDbConn, database, ctx)
+						err := postgres.ReplaceDatabase(sourceDbConn, targetDbConn, database, ctx, s)
 						if err != nil {
 							return fmt.Errorf(err.Error())
 						}
@@ -83,13 +76,12 @@ Config used:
 						return fmt.Errorf("must provide replace")
 					}
 
-					fmt.Printf("Finished in %v seconds", time.Since(startTime))
+					s.Stop()
 
+					fmt.Printf("\nFinished in %v seconds", time.Since(startTime))
 					break
 				}
 			}
-
-			fmt.Println("\n\nDONE!")
 
 			return nil
 		},

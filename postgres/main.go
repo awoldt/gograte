@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/briandowns/spinner"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -76,7 +77,7 @@ func GetTables(conn *pgx.Conn, ctx context.Context) ([]string, error) {
 	return tableNames, nil
 }
 
-func ReplaceDatabase(sourceConn, targetConn *pgx.Conn, database string, ctx context.Context) error {
+func ReplaceDatabase(sourceConn, targetConn *pgx.Conn, database string, ctx context.Context, s *spinner.Spinner) error {
 	databaseTablesStuctureQuery, err := sourceConn.Query(ctx, `
 		SELECT
 			table_name,
@@ -101,9 +102,10 @@ func ReplaceDatabase(sourceConn, targetConn *pgx.Conn, database string, ctx cont
 		return fmt.Errorf(err.Error())
 	}
 
+	s.Suffix = " loading tables and columns"
+
 	tableStructures := map[string][]Column{}
 	for _, dt := range databaseTables {
-		fmt.Println(*dt)
 		_, exists := tableStructures[dt.Tablename]
 
 		if !exists {
@@ -123,8 +125,6 @@ func ReplaceDatabase(sourceConn, targetConn *pgx.Conn, database string, ctx cont
 		})
 	}
 
-	fmt.Println(tableStructures)
-
 	// WRAP EVERYTHING IN A TRANSACTION TO PREVENT THE WORST!
 	tx, err := targetConn.Begin(ctx)
 	if err != nil {
@@ -134,13 +134,12 @@ func ReplaceDatabase(sourceConn, targetConn *pgx.Conn, database string, ctx cont
 
 	// generate a create table query for every table in the source db
 	for key, value := range tableStructures {
+		s.Suffix = fmt.Sprintf(" creating table %v", key)
 		// drop this table from teh database
 		_, err := tx.Exec(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %v CASCADE;", key))
 		if err != nil {
 			return fmt.Errorf(err.Error())
 		}
-
-		fmt.Println(generateCreateTableQuery(key, value))
 
 		// attempt to create this table in target db
 		_, err = tx.Exec(ctx, generateCreateTableQuery(key, value))

@@ -34,4 +34,3 @@ go run main.go \
 | `--target-user` | Target database username | `postgres` |
 | `--target-password` | Target database password | `password456` |
 | `--target-port` | Target database port | `5433` |
-| `--replace` | Delete and recreate target database (optional, DEFAULT behavior) | `true` |

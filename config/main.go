@@ -22,8 +22,19 @@ var flags []StringFlagType = []StringFlagType{
 	{name: "source-user", usage: "Database user value"},
 	{name: "source-password", usage: "Database password value"},
 	{name: "source-port", usage: "Database port"},
+}
 
-	{name: "replace", usage: "Delete and recreate target database (optional, DEFAULT behavior)"},
+type DatabaseConfig struct {
+	Driver         string
+	Database       string
+	TargetDb       string
+	TargetUser     string
+	TargetPassword string
+	TargetPort     string
+	SourceDb       string
+	SourceUser     string
+	SourcePassword string
+	SourcePort     string
 }
 
 func InitiateFlags() []cli.Flag {
@@ -38,5 +49,4 @@ func InitiateFlags() []cli.Flag {
 	}
 
 	return data
-
 }

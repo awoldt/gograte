@@ -3,8 +3,11 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"gograte/config"
 	"net/url"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/briandowns/spinner"
 	"github.com/jackc/pgx/v5"
@@ -29,7 +32,89 @@ type Column struct {
 	ColumnDefault *string // can be null
 }
 
-func ConnetToPostgres(host, database, user, password, port string) (*pgx.Conn, error) {
+func Replace(dbConfig config.DatabaseConfig, ctx context.Context) error {
+	// this is one of the main methods to run
+	// will delete the target db and rebuild based on targets schema
+	// ALL DATA WILL BE LOST
+	var yesno string
+	for {
+		fmt.Print("replacing a database is permanent and will remove all data. are you sure? (y/n): ")
+		fmt.Scan(&yesno)
+
+		answer := strings.TrimSpace(strings.ToLower(yesno))
+
+		if answer != "y" && answer != "n" {
+			continue
+		}
+
+		if answer == "n" {
+			os.Exit(0)
+		} else if answer == "y" {
+			break
+		} else {
+			continue
+		}
+	}
+
+	database := dbConfig.Database
+
+	targetDb := dbConfig.TargetDb
+	targetUser := dbConfig.TargetUser
+	targetPassword := dbConfig.TargetPassword
+	targetPort := dbConfig.TargetPort
+
+	sourcedb := dbConfig.SourceDb
+	sourceUser := dbConfig.SourceUser
+	sourcePassword := dbConfig.SourcePassword
+	sourcePort := dbConfig.SourcePort
+
+	// ensure all strings OTHER THAN PASSWORDS are not empty
+	if database == "" || targetDb == "" || targetUser == "" || targetPort == "" || sourcedb == "" || sourceUser == "" || sourcePort == "" {
+		return fmt.Errorf("must supply database, target-db, target-user, target-port, source-db, source-user, and source-port")
+	}
+
+	s := spinner.New(spinner.CharSets[2], 100*time.Millisecond)
+	s.Start()
+	defer s.Stop()
+
+	startTime := time.Now()
+
+	sourceDbConn, err := ConnectToPostgres(sourcedb, database, sourceUser, sourcePassword, sourcePort)
+	if err != nil {
+		return err
+	}
+	defer sourceDbConn.Close(ctx)
+
+	targetDbConn, err := ConnectToPostgres(targetDb, database, targetUser, targetPassword, targetPort)
+	if err != nil {
+		return err
+	}
+	defer targetDbConn.Close(ctx)
+
+	s.Suffix = " getting table details"
+
+	// get the number of tables for both the source and target database
+	_, err = GetTables(sourceDbConn, ctx)
+	if err != nil {
+		return err
+	}
+	_, err = GetTables(targetDbConn, ctx)
+	if err != nil {
+		return err
+	}
+
+	err = ReplaceDatabase(sourceDbConn, targetDbConn, database, ctx, s)
+	if err != nil {
+		return err
+	}
+
+	s.Stop()
+
+	fmt.Printf("\nFinished in %v seconds\n", time.Since(startTime))
+	return nil
+}
+
+func ConnectToPostgres(host, database, user, password, port string) (*pgx.Conn, error) {
 	if host == "" || database == "" || user == "" {
 		return nil, fmt.Errorf("Must supply a host, database, and user")
 	}
@@ -44,13 +129,13 @@ func ConnetToPostgres(host, database, user, password, port string) (*pgx.Conn, e
 
 	connectionConfig, err := pgx.ParseConfig(connectionString)
 	if err != nil {
-		return nil, fmt.Errorf(err.Error())
+		return nil, err
 	}
 
 	ctx := context.Background()
 	conn, err := pgx.ConnectConfig(ctx, connectionConfig)
 	if err != nil {
-		return nil, fmt.Errorf(err.Error())
+		return nil, err
 	}
 
 	return conn, nil
@@ -61,12 +146,12 @@ func GetTables(conn *pgx.Conn, ctx context.Context) ([]string, error) {
 	tablesQuery, err := conn.Query(ctx, "SELECT tablename FROM pg_tables WHERE schemaname = 'public';")
 
 	if err != nil {
-		return nil, fmt.Errorf(err.Error())
+		return nil, err
 	}
 
 	tables, err := pgx.CollectRows(tablesQuery, pgx.RowToAddrOfStructByName[TablesQueryResponse])
 	if err != nil {
-		return nil, fmt.Errorf(err.Error())
+		return nil, err
 	}
 
 	var tableNames []string
@@ -99,7 +184,7 @@ func ReplaceDatabase(sourceConn, targetConn *pgx.Conn, database string, ctx cont
 
 	databaseTables, err := pgx.CollectRows(databaseTablesStuctureQuery, pgx.RowToAddrOfStructByName[TableStructureQueryResponse])
 	if err != nil {
-		return fmt.Errorf(err.Error())
+		return err
 	}
 
 	s.Suffix = " loading tables and columns"
@@ -113,7 +198,7 @@ func ReplaceDatabase(sourceConn, targetConn *pgx.Conn, database string, ctx cont
 		}
 
 		var isNullable bool
-		if dt.Tablename == " YES" {
+		if dt.Nullable == "YES" {
 			isNullable = true
 		}
 
@@ -128,7 +213,7 @@ func ReplaceDatabase(sourceConn, targetConn *pgx.Conn, database string, ctx cont
 	// WRAP EVERYTHING IN A TRANSACTION TO PREVENT THE WORST!
 	tx, err := targetConn.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf(err.Error())
+		return err
 	}
 	defer tx.Rollback(ctx) // rollback if we dont commit!!!!!!
 
@@ -138,13 +223,13 @@ func ReplaceDatabase(sourceConn, targetConn *pgx.Conn, database string, ctx cont
 		// drop this table from teh database
 		_, err := tx.Exec(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %v CASCADE;", key))
 		if err != nil {
-			return fmt.Errorf(err.Error())
+			return err
 		}
 
 		// attempt to create this table in target db
 		_, err = tx.Exec(ctx, generateCreateTableQuery(key, value))
 		if err != nil {
-			return fmt.Errorf(err.Error())
+			return err
 		}
 	}
 

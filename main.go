@@ -75,7 +75,7 @@ Config used:
 					}
 
 					if replace == "true" {
-						err := postgres.ReplaceDatabase(sourceDbConn, ctx)
+						err := postgres.ReplaceDatabase(sourceDbConn, targetDbConn, database, ctx)
 						if err != nil {
 							return fmt.Errorf(err.Error())
 						}

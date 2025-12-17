@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -75,7 +76,7 @@ func GetTables(conn *pgx.Conn, ctx context.Context) ([]string, error) {
 	return tableNames, nil
 }
 
-func ReplaceDatabase(sourceConn *pgx.Conn, ctx context.Context) error {
+func ReplaceDatabase(sourceConn, targetConn *pgx.Conn, database string, ctx context.Context) error {
 	databaseTablesStuctureQuery, err := sourceConn.Query(ctx, `
 		SELECT
 			table_name,
@@ -98,7 +99,6 @@ func ReplaceDatabase(sourceConn *pgx.Conn, ctx context.Context) error {
 	}
 
 	tableStructures := map[string][]Column{}
-
 	for _, dt := range databaseTables {
 		_, exists := tableStructures[dt.Tablename]
 
@@ -121,5 +121,54 @@ func ReplaceDatabase(sourceConn *pgx.Conn, ctx context.Context) error {
 
 	fmt.Println(tableStructures)
 
+	// // WRAP EVERYTHING IN A TRANSACTION TO PREVENT THE WORST!
+	// tx, err := targetConn.Begin(ctx)
+	// if err != nil {
+	// 	return fmt.Errorf(err.Error())
+	// }
+	// defer tx.Rollback(ctx) // rollback if we dont commit
+
+	// // DELETE THE DATABASE (wont throw error if database doesnt exist)
+	// _, err = tx.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", database))
+	// if err != nil {
+	// 	return fmt.Errorf(err.Error())
+	// }
+
+	// // CREATE THE DATABSE
+	// _, err = tx.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", database))
+	// if err != nil {
+	// 	return fmt.Errorf(err.Error())
+	// }
+
+	// generate a create table query for every table in the source db
+	for key, value := range tableStructures {
+		fmt.Println(generateCreateTableQuery(key, value))
+	}
+
 	return nil
+}
+
+func generateCreateTableQuery(table string, columns []Column) string {
+	var stringBuilder strings.Builder
+	stringBuilder.WriteString(fmt.Sprintf("CREATE TABLE %s(\n", table))
+
+	numOfCols := len(columns)
+
+	// all the crazy stuff here
+	for i, col := range columns {
+		nullConstraintString := ""
+		if !col.Nullable {
+			nullConstraintString = "NOT NULL"
+		}
+		stringBuilder.WriteString(fmt.Sprintf("%v %v %v", col.ColumnName, col.ColumnType, nullConstraintString))
+
+		// add comma if not the last column
+		if i < numOfCols-1 {
+			stringBuilder.WriteString(", ")
+		}
+	}
+
+	stringBuilder.WriteString("\n);")
+
+	return stringBuilder.String()
 }

@@ -81,7 +81,10 @@ func ReplaceDatabase(sourceConn, targetConn *pgx.Conn, database string, ctx cont
 		SELECT
 			table_name,
 			column_name,
-			data_type,
+			CASE 
+				WHEN data_type = 'ARRAY' THEN REPLACE(udt_name, '_', '') || '[]'
+				ELSE data_type
+			END as data_type,
 			is_nullable,
 			column_default
 		FROM information_schema.columns
@@ -100,6 +103,7 @@ func ReplaceDatabase(sourceConn, targetConn *pgx.Conn, database string, ctx cont
 
 	tableStructures := map[string][]Column{}
 	for _, dt := range databaseTables {
+		fmt.Println(*dt)
 		_, exists := tableStructures[dt.Tablename]
 
 		if !exists {
@@ -121,29 +125,31 @@ func ReplaceDatabase(sourceConn, targetConn *pgx.Conn, database string, ctx cont
 
 	fmt.Println(tableStructures)
 
-	// // WRAP EVERYTHING IN A TRANSACTION TO PREVENT THE WORST!
-	// tx, err := targetConn.Begin(ctx)
-	// if err != nil {
-	// 	return fmt.Errorf(err.Error())
-	// }
-	// defer tx.Rollback(ctx) // rollback if we dont commit
-
-	// // DELETE THE DATABASE (wont throw error if database doesnt exist)
-	// _, err = tx.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", database))
-	// if err != nil {
-	// 	return fmt.Errorf(err.Error())
-	// }
-
-	// // CREATE THE DATABSE
-	// _, err = tx.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", database))
-	// if err != nil {
-	// 	return fmt.Errorf(err.Error())
-	// }
+	// WRAP EVERYTHING IN A TRANSACTION TO PREVENT THE WORST!
+	tx, err := targetConn.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf(err.Error())
+	}
+	defer tx.Rollback(ctx) // rollback if we dont commit!!!!!!
 
 	// generate a create table query for every table in the source db
 	for key, value := range tableStructures {
+		// drop this table from teh database
+		_, err := tx.Exec(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %v CASCADE;", key))
+		if err != nil {
+			return fmt.Errorf(err.Error())
+		}
+
 		fmt.Println(generateCreateTableQuery(key, value))
+
+		// attempt to create this table in target db
+		_, err = tx.Exec(ctx, generateCreateTableQuery(key, value))
+		if err != nil {
+			return fmt.Errorf(err.Error())
+		}
 	}
+
+	tx.Commit(ctx)
 
 	return nil
 }

@@ -2,8 +2,6 @@
 
 A command-line tool for migrating PostgreSQL database schemas from a source database to a target database.
 
-## Usage
-
 ### Command Structure
 
 ```bash

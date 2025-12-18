@@ -32,10 +32,28 @@ type Column struct {
 	ColumnDefault *string // can be null
 }
 
-func ReplaceMethod(dbConfig config.DatabaseConfig, ctx context.Context) error {
+func ReplaceMethod(dbConfig config.DatabaseConfig, ctx context.Context, spinner *spinner.Spinner) error {
 	// this is one of the main methods to run
 	// will delete the target db and rebuild based on targets schema
 	// ALL DATA WILL BE LOST
+
+	database := dbConfig.Database
+
+	targetDb := dbConfig.TargetDb
+	targetUser := dbConfig.TargetUser
+	targetPassword := dbConfig.TargetPassword
+	targetPort := dbConfig.TargetPort
+
+	sourcedb := dbConfig.SourceDb
+	sourceUser := dbConfig.SourceUser
+	sourcePassword := dbConfig.SourcePassword
+	sourcePort := dbConfig.SourcePort
+
+	// ensure all strings OTHER THAN PASSWORDS are not empty
+	if database == "" || targetDb == "" || targetUser == "" || targetPort == "" || sourcedb == "" || sourceUser == "" || sourcePort == "" {
+		return fmt.Errorf("must supply database, target-db, target-user, target-port, source-db, source-user, and source-port")
+	}
+
 	var yesno string
 	for {
 		fmt.Print("replacing a database is permanent and will remove all data. are you sure? (y/n): ")
@@ -56,58 +74,65 @@ func ReplaceMethod(dbConfig config.DatabaseConfig, ctx context.Context) error {
 		}
 	}
 
-	database := dbConfig.Database
-
-	targetDb := dbConfig.TargetDb
-	targetUser := dbConfig.TargetUser
-	targetPassword := dbConfig.TargetPassword
-	targetPort := dbConfig.TargetPort
-
-	sourcedb := dbConfig.SourceDb
-	sourceUser := dbConfig.SourceUser
-	sourcePassword := dbConfig.SourcePassword
-	sourcePort := dbConfig.SourcePort
-
-	// ensure all strings OTHER THAN PASSWORDS are not empty
-	if database == "" || targetDb == "" || targetUser == "" || targetPort == "" || sourcedb == "" || sourceUser == "" || sourcePort == "" {
-		return fmt.Errorf("must supply database, target-db, target-user, target-port, source-db, source-user, and source-port")
-	}
-
-	s := spinner.New(spinner.CharSets[2], 100*time.Millisecond)
-	s.Start()
-	defer s.Stop()
-
+	spinner.Start()
 	startTime := time.Now()
 
-	sourceDbConn, err := ConnectToPostgres(sourcedb, database, sourceUser, sourcePassword, sourcePort)
+	sourceDbConn, err := connectToPostgres(sourcedb, database, sourceUser, sourcePassword, sourcePort)
 	if err != nil {
 		return err
 	}
 	defer sourceDbConn.Close(ctx)
 
-	targetDbConn, err := ConnectToPostgres(targetDb, database, targetUser, targetPassword, targetPort)
+	targetDbConn, err := connectToPostgres(targetDb, database, targetUser, targetPassword, targetPort)
 	if err != nil {
 		return err
 	}
 	defer targetDbConn.Close(ctx)
 
-	s.Suffix = " getting table details"
+	spinner.Suffix = " getting table details"
 
-	// get the number of tables for both the source and target database
-	_, err = GetTables(sourceDbConn, ctx)
+	// WRAP EVERYTHING IN A TRANSACTION TO PREVENT THE WORST!
+	tx, err := targetDbConn.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	_, err = GetTables(targetDbConn, ctx)
+	defer tx.Rollback(ctx) // rollback if we dont commit!!!!!!
+
+	tableStructures, err := getDatabaseTablesSchema(sourceDbConn, ctx, spinner)
 	if err != nil {
 		return err
 	}
+
+	// generate a create table query for every table in the source db
+	for key, value := range tableStructures {
+		spinner.Suffix = fmt.Sprintf(" creating table %v", key)
+		// drop this table from teh database
+		_, err := tx.Exec(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %v CASCADE;", key))
+		if err != nil {
+			return err
+		}
+
+		// attempt to create this table in target db
+		_, err = tx.Exec(ctx, generateCreateTableQuery(key, value))
+		if err != nil {
+			return err
+		}
+	}
+
+	tx.Commit(ctx)
+	spinner.Stop()
+
+	fmt.Printf("\nFinished in %v seconds\n", time.Since(startTime))
+	return nil
+}
+
+func getDatabaseTablesSchema(sourceDbConn *pgx.Conn, ctx context.Context, spinner *spinner.Spinner) (map[string][]Column, error) {
 
 	databaseTablesStuctureQuery, err := sourceDbConn.Query(ctx, `
 		SELECT
 			table_name,
 			column_name,
-			CASE 
+			CASE
 				WHEN data_type = 'ARRAY' THEN REPLACE(udt_name, '_', '') || '[]'
 				ELSE data_type
 			END as data_type,
@@ -119,15 +144,15 @@ func ReplaceMethod(dbConfig config.DatabaseConfig, ctx context.Context) error {
 	`)
 
 	if err != nil {
-		return fmt.Errorf("%s", "error while querying source databases tables\n"+err.Error())
+		return nil, fmt.Errorf("%s", "error while querying source databases tables\n"+err.Error())
 	}
 
 	databaseTables, err := pgx.CollectRows(databaseTablesStuctureQuery, pgx.RowToAddrOfStructByName[TableStructureQueryResponse])
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	s.Suffix = " loading tables and columns"
+	spinner.Suffix = " loading tables and columns"
 
 	tableStructures := map[string][]Column{}
 	for _, dt := range databaseTables {
@@ -150,37 +175,10 @@ func ReplaceMethod(dbConfig config.DatabaseConfig, ctx context.Context) error {
 		})
 	}
 
-	// WRAP EVERYTHING IN A TRANSACTION TO PREVENT THE WORST!
-	tx, err := targetDbConn.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx) // rollback if we dont commit!!!!!!
-
-	// generate a create table query for every table in the source db
-	for key, value := range tableStructures {
-		s.Suffix = fmt.Sprintf(" creating table %v", key)
-		// drop this table from teh database
-		_, err := tx.Exec(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %v CASCADE;", key))
-		if err != nil {
-			return err
-		}
-
-		// attempt to create this table in target db
-		_, err = tx.Exec(ctx, generateCreateTableQuery(key, value))
-		if err != nil {
-			return err
-		}
-	}
-
-	tx.Commit(ctx)
-	s.Stop()
-
-	fmt.Printf("\nFinished in %v seconds\n", time.Since(startTime))
-	return nil
+	return tableStructures, nil
 }
 
-func ConnectToPostgres(host, database, user, password, port string) (*pgx.Conn, error) {
+func connectToPostgres(host, database, user, password, port string) (*pgx.Conn, error) {
 	if host == "" || database == "" || user == "" {
 		return nil, fmt.Errorf("Must supply a host, database, and user")
 	}
@@ -205,27 +203,6 @@ func ConnectToPostgres(host, database, user, password, port string) (*pgx.Conn, 
 	}
 
 	return conn, nil
-}
-
-func GetTables(conn *pgx.Conn, ctx context.Context) ([]string, error) {
-
-	tablesQuery, err := conn.Query(ctx, "SELECT tablename FROM pg_tables WHERE schemaname = 'public';")
-
-	if err != nil {
-		return nil, err
-	}
-
-	tables, err := pgx.CollectRows(tablesQuery, pgx.RowToAddrOfStructByName[TablesQueryResponse])
-	if err != nil {
-		return nil, err
-	}
-
-	var tableNames []string
-	for _, table := range tables {
-		tableNames = append(tableNames, table.Tablename)
-	}
-
-	return tableNames, nil
 }
 
 func generateCreateTableQuery(table string, columns []Column) string {

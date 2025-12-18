@@ -8,7 +8,9 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/briandowns/spinner"
 	"github.com/urfave/cli/v3"
 )
 
@@ -20,6 +22,9 @@ func main() {
 			if method == "" {
 				return fmt.Errorf("you must add an argument to the gograte command")
 			}
+
+			s := spinner.New(spinner.CharSets[2], 100*time.Millisecond)
+			defer s.Stop()
 
 			dbConfig := config.DatabaseConfig{
 				Driver:         cmd.String("driver"),
@@ -40,7 +45,7 @@ func main() {
 					switch dbConfig.Driver {
 					case "postgres":
 						{
-							if err := postgres.ReplaceMethod(dbConfig, ctx); err != nil {
+							if err := postgres.ReplaceMethod(dbConfig, ctx, s); err != nil {
 								return err
 							}
 							break

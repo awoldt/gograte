@@ -16,7 +16,7 @@ type TablesQueryResponse struct {
 	Tablename string `db:"tablename"`
 }
 
-type TableStructureQueryResponse struct {
+type DatabaseTablesColumnsQuery struct {
 	Tablename     string  `db:"table_name"`
 	ColumnName    string  `db:"column_name"`
 	DataType      string  `db:"data_type"`
@@ -24,29 +24,15 @@ type TableStructureQueryResponse struct {
 	ColumnDefault *string `db:"column_default"`
 }
 
+type DatabaseTableQuery struct {
+	Tablename string `db:"table_name"`
+}
+
 type Column struct {
 	ColumnName    string
 	ColumnType    string
 	Nullable      bool
 	ColumnDefault *string // can be null
-}
-
-func SyncMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, spinner *spinner.Spinner) error {
-	// sync incrementally updates the database schema to match the target state
-	// unlike replace, this preserves all data and only adds missing tables/columns
-	// or modifies compatible schema elements. Cannot handle destructive changes
-	// like column removals or type changes
-	// DATA WONT BE LOST
-
-	// first, get all the tables for the source database
-	tables, err := getDatabaseTablesSchema(sourceDbConn, ctx, spinner)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println(tables)
-
-	return nil
 }
 
 func ReplaceMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, spinner *spinner.Spinner) error {
@@ -85,21 +71,30 @@ func ReplaceMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, sp
 	}
 	defer tx.Rollback(ctx) // rollback if we dont commit!!!!!!
 
-	tableStructures, err := getDatabaseTablesSchema(sourceDbConn, ctx, spinner)
+	sourceTableStructures, err := getDatabaseTablesSchema(sourceDbConn, ctx, spinner)
 	if err != nil {
 		return err
 	}
 
-	// generate a create table query for every table in the source db
-	for key, value := range tableStructures {
-		spinner.Suffix = fmt.Sprintf(" creating table %v", key)
-		// drop this table from teh database
+	targetTableStructures, err := getDatabaseTablesSchema(targetDbConn, ctx, spinner)
+	if err != nil {
+		return err
+	}
+
+	// delete all tables in the target db before creating tables
+	for key := range targetTableStructures {
+		spinner.Suffix = fmt.Sprintf(" deleting table %v", key)
+
 		_, err := tx.Exec(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %v CASCADE;", key))
 		if err != nil {
 			return err
 		}
+	}
 
-		// attempt to create this table in target db
+	// generate a create table query for every table detected in source db
+	for key, value := range sourceTableStructures {
+		spinner.Suffix = fmt.Sprintf(" creating table %v", key)
+
 		_, err = tx.Exec(ctx, generateCreateTableQuery(key, value))
 		if err != nil {
 			return err
@@ -115,7 +110,38 @@ func ReplaceMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, sp
 
 func getDatabaseTablesSchema(dbConn *pgx.Conn, ctx context.Context, spinner *spinner.Spinner) (map[string][]Column, error) {
 
-	databaseTablesStuctureQuery, err := dbConn.Query(ctx, `
+	spinner.Suffix = " loading tables"
+
+	// first, get only the tables
+	// this will return all tables regardless or not if it has any columns
+	databaseTablesQuery, err := dbConn.Query(ctx, `
+		SELECT table_name
+		FROM information_schema.tables
+		WHERE table_schema = 'public'
+		ORDER BY table_name;
+	`)
+
+	if err != nil {
+		return nil, fmt.Errorf("%s", "error while querying source databases tables\n"+err.Error())
+	}
+
+	databaseTables, err := pgx.CollectRows(databaseTablesQuery, pgx.RowToAddrOfStructByName[DatabaseTableQuery])
+	if err != nil {
+		return nil, err
+	}
+
+	tables := make(map[string][]Column)
+	for _, t := range databaseTables {
+		_, exists := tables[t.Tablename]
+
+		if !exists {
+			tables[t.Tablename] = []Column{}
+		}
+	}
+
+	spinner.Suffix = " loading columns"
+
+	databaseTablesColumnsQuery, err := dbConn.Query(ctx, `
 		SELECT
 			table_name,
 			column_name,
@@ -134,27 +160,18 @@ func getDatabaseTablesSchema(dbConn *pgx.Conn, ctx context.Context, spinner *spi
 		return nil, fmt.Errorf("%s", "error while querying source databases tables\n"+err.Error())
 	}
 
-	databaseTables, err := pgx.CollectRows(databaseTablesStuctureQuery, pgx.RowToAddrOfStructByName[TableStructureQueryResponse])
+	databaseTablesColumns, err := pgx.CollectRows(databaseTablesColumnsQuery, pgx.RowToAddrOfStructByName[DatabaseTablesColumnsQuery])
 	if err != nil {
 		return nil, err
 	}
 
-	spinner.Suffix = " loading tables and columns"
-
-	tableStructures := map[string][]Column{}
-	for _, dt := range databaseTables {
-		_, exists := tableStructures[dt.Tablename]
-
-		if !exists {
-			tableStructures[dt.Tablename] = []Column{}
-		}
-
+	for _, dt := range databaseTablesColumns {
 		var isNullable bool
 		if dt.Nullable == "YES" {
 			isNullable = true
 		}
 
-		tableStructures[dt.Tablename] = append(tableStructures[dt.Tablename], Column{
+		tables[dt.Tablename] = append(tables[dt.Tablename], Column{
 			ColumnName:    dt.ColumnName,
 			ColumnType:    dt.DataType,
 			Nullable:      isNullable,
@@ -162,12 +179,12 @@ func getDatabaseTablesSchema(dbConn *pgx.Conn, ctx context.Context, spinner *spi
 		})
 	}
 
-	return tableStructures, nil
+	return tables, nil
 }
 
 func ConnectToPostgres(host, database, user, password, port string) (*pgx.Conn, error) {
 	if host == "" || database == "" || user == "" {
-		return nil, fmt.Errorf("Must supply a host, database, and user")
+		return nil, fmt.Errorf("must supply a host, database, and user")
 	}
 	var connectionString string
 
@@ -194,7 +211,7 @@ func ConnectToPostgres(host, database, user, password, port string) (*pgx.Conn, 
 
 func generateCreateTableQuery(table string, columns []Column) string {
 	var stringBuilder strings.Builder
-	stringBuilder.WriteString(fmt.Sprintf("CREATE TABLE %s(\n", table))
+	stringBuilder.WriteString(fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s(\n", table))
 
 	numOfCols := len(columns)
 

@@ -1,34 +1,44 @@
-# gograte - PostgreSQL Database Migration Tool
+# gograte - PostgreSQL Schema Migration Tool
 
-A command-line tool for migrating PostgreSQL database schemas from a source database to a target database.
+`gograte` is a lightweight Go-based CLI tool designed to synchronize PostgreSQL database schemas. It allows you to clone the table structures from a **source** database and apply them to a **target** database.
 
-### Command Structure
+## Features
+
+- **Schema Mirroring**: Automatically detects tables and columns (types and nullability) from a source database.
+- **Transactional Safety**: Uses database transactions to ensure that changes are only committed if the entire process succeeds.
+
+---
+
+## Usage
+
+The primary command is `replace`, which drops existing tables in the target database and recreates them based on the source schema.
 
 ```bash
-go run main.go \
-  --driver <DATABASE_DRIVER> \
-  --database <DATABASE_NAME> \
-  --source-db <SOURCE_HOST> \
-  --source-user <SOURCE_USERNAME> \
-  --source-password <SOURCE_PASSWORD> \
-  --source-port <SOURCE_PORT> \
-  --target-db <TARGET_HOST> \
-  --target-user <TARGET_USERNAME> \
-  --target-password <TARGET_PASSWORD> \
-  --target-port <TARGET_PORT>
+go run main.go replace \
+  --driver postgres \
+  --database <DB_NAME> \
+  --source-db <SRC_HOST> \
+  --source-user <SRC_USER> \
+  --source-password <SRC_PWD> \
+  --source-port 5432 \
+  --target-db <TGT_HOST> \
+  --target-user <TGT_USER> \
+  --target-password <TGT_PWD> \
+  --target-port 5433
 ```
 
-## Required Flags
+### Required Flags
 
-| Flag | Description | Example |
-|------|-------------|---------|
-| `--driver` | Database driver type (currently supports: `postgres`) | `postgres` |
-| `--database` | The database name within the specified driver to connect to | `myapp_db` |
-| `--source-db` | Source database host (what you want to clone from) | `localhost` |
-| `--source-user` | Source database username | `postgres` |
-| `--source-password` | Source database password | `password123` |
-| `--source-port` | Source database port | `5432` |
-| `--target-db` | Target database host (what will be updated) | `localhost` |
-| `--target-user` | Target database username | `postgres` |
-| `--target-password` | Target database password | `password456` |
-| `--target-port` | Target database port | `5433` |
+| Flag | Description |
+|------|-------------|
+| `--driver` | Database type (currently only `postgres` is supported). |
+| `--database` | The specific database name to connect to on both hosts. |
+| `--source-*` | Connection details for the **source** (the "template" database). |
+| `--target-*` | Connection details for the **target** (the database to be updated). |
+
+> **Note:** Passwords are optional and can be omitted if the database doesn't require them.
+
+
+## ⚠️ Warning
+
+The `replace` command is **destructive**. It will permanently remove all existing data and tables in the target database before recreating the schema. Always ensure you have backups before running this tool against production environments.

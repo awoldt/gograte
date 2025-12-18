@@ -89,12 +89,7 @@ func main() {
 						return err
 					}
 				}
-			case "sync":
-				if dbConfig.Driver == "postgres" {
-					if err := postgres.SyncMethod(targetDbConn, sourceDbConn, ctx, s); err != nil {
-						return err
-					}
-				}
+
 			default:
 				return fmt.Errorf("'%v' is not a valid command", method)
 			}

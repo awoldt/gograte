@@ -40,7 +40,7 @@ func main() {
 					switch dbConfig.Driver {
 					case "postgres":
 						{
-							if err := postgres.Replace(dbConfig, ctx); err != nil {
+							if err := postgres.ReplaceMethod(dbConfig, ctx); err != nil {
 								return err
 							}
 							break

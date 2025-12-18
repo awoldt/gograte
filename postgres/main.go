@@ -32,7 +32,7 @@ type Column struct {
 	ColumnDefault *string // can be null
 }
 
-func Replace(dbConfig config.DatabaseConfig, ctx context.Context) error {
+func ReplaceMethod(dbConfig config.DatabaseConfig, ctx context.Context) error {
 	// this is one of the main methods to run
 	// will delete the target db and rebuild based on targets schema
 	// ALL DATA WILL BE LOST
@@ -103,11 +103,77 @@ func Replace(dbConfig config.DatabaseConfig, ctx context.Context) error {
 		return err
 	}
 
-	err = ReplaceDatabase(sourceDbConn, targetDbConn, database, ctx, s)
+	databaseTablesStuctureQuery, err := sourceDbConn.Query(ctx, `
+		SELECT
+			table_name,
+			column_name,
+			CASE 
+				WHEN data_type = 'ARRAY' THEN REPLACE(udt_name, '_', '') || '[]'
+				ELSE data_type
+			END as data_type,
+			is_nullable,
+			column_default
+		FROM information_schema.columns
+		WHERE table_schema = 'public'
+		ORDER BY table_name, ordinal_position;
+	`)
+
+	if err != nil {
+		return fmt.Errorf("%s", "error while querying source databases tables\n"+err.Error())
+	}
+
+	databaseTables, err := pgx.CollectRows(databaseTablesStuctureQuery, pgx.RowToAddrOfStructByName[TableStructureQueryResponse])
 	if err != nil {
 		return err
 	}
 
+	s.Suffix = " loading tables and columns"
+
+	tableStructures := map[string][]Column{}
+	for _, dt := range databaseTables {
+		_, exists := tableStructures[dt.Tablename]
+
+		if !exists {
+			tableStructures[dt.Tablename] = []Column{}
+		}
+
+		var isNullable bool
+		if dt.Nullable == "YES" {
+			isNullable = true
+		}
+
+		tableStructures[dt.Tablename] = append(tableStructures[dt.Tablename], Column{
+			ColumnName:    dt.ColumnName,
+			ColumnType:    dt.DataType,
+			Nullable:      isNullable,
+			ColumnDefault: dt.ColumnDefault,
+		})
+	}
+
+	// WRAP EVERYTHING IN A TRANSACTION TO PREVENT THE WORST!
+	tx, err := targetDbConn.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) // rollback if we dont commit!!!!!!
+
+	// generate a create table query for every table in the source db
+	for key, value := range tableStructures {
+		s.Suffix = fmt.Sprintf(" creating table %v", key)
+		// drop this table from teh database
+		_, err := tx.Exec(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %v CASCADE;", key))
+		if err != nil {
+			return err
+		}
+
+		// attempt to create this table in target db
+		_, err = tx.Exec(ctx, generateCreateTableQuery(key, value))
+		if err != nil {
+			return err
+		}
+	}
+
+	tx.Commit(ctx)
 	s.Stop()
 
 	fmt.Printf("\nFinished in %v seconds\n", time.Since(startTime))
@@ -160,82 +226,6 @@ func GetTables(conn *pgx.Conn, ctx context.Context) ([]string, error) {
 	}
 
 	return tableNames, nil
-}
-
-func ReplaceDatabase(sourceConn, targetConn *pgx.Conn, database string, ctx context.Context, s *spinner.Spinner) error {
-	databaseTablesStuctureQuery, err := sourceConn.Query(ctx, `
-		SELECT
-			table_name,
-			column_name,
-			CASE 
-				WHEN data_type = 'ARRAY' THEN REPLACE(udt_name, '_', '') || '[]'
-				ELSE data_type
-			END as data_type,
-			is_nullable,
-			column_default
-		FROM information_schema.columns
-		WHERE table_schema = 'public'
-		ORDER BY table_name, ordinal_position;
-	`)
-
-	if err != nil {
-		return fmt.Errorf("%s", "error while querying source databases tables\n"+err.Error())
-	}
-
-	databaseTables, err := pgx.CollectRows(databaseTablesStuctureQuery, pgx.RowToAddrOfStructByName[TableStructureQueryResponse])
-	if err != nil {
-		return err
-	}
-
-	s.Suffix = " loading tables and columns"
-
-	tableStructures := map[string][]Column{}
-	for _, dt := range databaseTables {
-		_, exists := tableStructures[dt.Tablename]
-
-		if !exists {
-			tableStructures[dt.Tablename] = []Column{}
-		}
-
-		var isNullable bool
-		if dt.Nullable == "YES" {
-			isNullable = true
-		}
-
-		tableStructures[dt.Tablename] = append(tableStructures[dt.Tablename], Column{
-			ColumnName:    dt.ColumnName,
-			ColumnType:    dt.DataType,
-			Nullable:      isNullable,
-			ColumnDefault: dt.ColumnDefault,
-		})
-	}
-
-	// WRAP EVERYTHING IN A TRANSACTION TO PREVENT THE WORST!
-	tx, err := targetConn.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx) // rollback if we dont commit!!!!!!
-
-	// generate a create table query for every table in the source db
-	for key, value := range tableStructures {
-		s.Suffix = fmt.Sprintf(" creating table %v", key)
-		// drop this table from teh database
-		_, err := tx.Exec(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %v CASCADE;", key))
-		if err != nil {
-			return err
-		}
-
-		// attempt to create this table in target db
-		_, err = tx.Exec(ctx, generateCreateTableQuery(key, value))
-		if err != nil {
-			return err
-		}
-	}
-
-	tx.Commit(ctx)
-
-	return nil
 }
 
 func generateCreateTableQuery(table string, columns []Column) string {

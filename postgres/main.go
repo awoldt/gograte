@@ -3,7 +3,6 @@ package postgres
 import (
 	"context"
 	"fmt"
-	"gograte/config"
 	"net/url"
 	"os"
 	"strings"
@@ -32,27 +31,27 @@ type Column struct {
 	ColumnDefault *string // can be null
 }
 
-func ReplaceMethod(dbConfig config.DatabaseConfig, ctx context.Context, spinner *spinner.Spinner) error {
-	// this is one of the main methods to run
+func SyncMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, spinner *spinner.Spinner) error {
+	// sync incrementally updates the database schema to match the target state
+	// unlike replace, this preserves all data and only adds missing tables/columns
+	// or modifies compatible schema elements. Cannot handle destructive changes
+	// like column removals or type changes
+	// DATA WONT BE LOST
+
+	// first, get all the tables for the source database
+	tables, err := getDatabaseTablesSchema(sourceDbConn, ctx, spinner)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(tables)
+
+	return nil
+}
+
+func ReplaceMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, spinner *spinner.Spinner) error {
 	// will delete the target db and rebuild based on targets schema
 	// ALL DATA WILL BE LOST
-
-	database := dbConfig.Database
-
-	targetDb := dbConfig.TargetDb
-	targetUser := dbConfig.TargetUser
-	targetPassword := dbConfig.TargetPassword
-	targetPort := dbConfig.TargetPort
-
-	sourcedb := dbConfig.SourceDb
-	sourceUser := dbConfig.SourceUser
-	sourcePassword := dbConfig.SourcePassword
-	sourcePort := dbConfig.SourcePort
-
-	// ensure all strings OTHER THAN PASSWORDS are not empty
-	if database == "" || targetDb == "" || targetUser == "" || targetPort == "" || sourcedb == "" || sourceUser == "" || sourcePort == "" {
-		return fmt.Errorf("must supply database, target-db, target-user, target-port, source-db, source-user, and source-port")
-	}
 
 	var yesno string
 	for {
@@ -74,20 +73,8 @@ func ReplaceMethod(dbConfig config.DatabaseConfig, ctx context.Context, spinner 
 		}
 	}
 
-	spinner.Start()
 	startTime := time.Now()
-
-	sourceDbConn, err := connectToPostgres(sourcedb, database, sourceUser, sourcePassword, sourcePort)
-	if err != nil {
-		return err
-	}
-	defer sourceDbConn.Close(ctx)
-
-	targetDbConn, err := connectToPostgres(targetDb, database, targetUser, targetPassword, targetPort)
-	if err != nil {
-		return err
-	}
-	defer targetDbConn.Close(ctx)
+	spinner.Start()
 
 	spinner.Suffix = " getting table details"
 
@@ -126,9 +113,9 @@ func ReplaceMethod(dbConfig config.DatabaseConfig, ctx context.Context, spinner 
 	return nil
 }
 
-func getDatabaseTablesSchema(sourceDbConn *pgx.Conn, ctx context.Context, spinner *spinner.Spinner) (map[string][]Column, error) {
+func getDatabaseTablesSchema(dbConn *pgx.Conn, ctx context.Context, spinner *spinner.Spinner) (map[string][]Column, error) {
 
-	databaseTablesStuctureQuery, err := sourceDbConn.Query(ctx, `
+	databaseTablesStuctureQuery, err := dbConn.Query(ctx, `
 		SELECT
 			table_name,
 			column_name,
@@ -178,7 +165,7 @@ func getDatabaseTablesSchema(sourceDbConn *pgx.Conn, ctx context.Context, spinne
 	return tableStructures, nil
 }
 
-func connectToPostgres(host, database, user, password, port string) (*pgx.Conn, error) {
+func ConnectToPostgres(host, database, user, password, port string) (*pgx.Conn, error) {
 	if host == "" || database == "" || user == "" {
 		return nil, fmt.Errorf("Must supply a host, database, and user")
 	}

@@ -39,31 +39,64 @@ func main() {
 				SourcePort:     cmd.String("source-port"),
 			}
 
-			switch method {
-			case "replace":
-				{
-					switch dbConfig.Driver {
-					case "postgres":
-						{
-							if err := postgres.ReplaceMethod(dbConfig, ctx, s); err != nil {
-								return err
-							}
-							break
-						}
-					default:
-						{
-							if dbConfig.Driver == "" {
-								return fmt.Errorf("must supply a database driver")
-							}
-							return fmt.Errorf("'%v' is not a supported database", dbConfig.Driver)
-						}
-					}
+			database := dbConfig.Database
+			driver := dbConfig.Driver
+
+			targetDb := dbConfig.TargetDb
+			targetUser := dbConfig.TargetUser
+			targetPassword := dbConfig.TargetPassword
+			targetPort := dbConfig.TargetPort
+
+			sourcedb := dbConfig.SourceDb
+			sourceUser := dbConfig.SourceUser
+			sourcePassword := dbConfig.SourcePassword
+			sourcePort := dbConfig.SourcePort
+
+			// ensure all strings OTHER THAN PASSWORDS are not empty
+			if database == "" || targetDb == "" || targetUser == "" || targetPort == "" || sourcedb == "" || sourceUser == "" || sourcePort == "" || driver == "" {
+				return fmt.Errorf("must supply database, database driver, target-db, target-user, target-port, source-db, source-user, and source-port")
+			}
+
+			// make sure this is a valid database driver even before connecting to the databases
+			validDriver := false
+			for _, v := range config.SupportedDatabases {
+				if v == strings.ToLower(driver) {
+					validDriver = true
 					break
 				}
-			default:
-				{
-					return fmt.Errorf("'%v' is not a valid command", method)
+			}
+			if !validDriver {
+				return fmt.Errorf("'%v' is not a supported database driver", driver)
+			}
+
+			// connect to both the target and source databases
+			sourceDbConn, err := postgres.ConnectToPostgres(sourcedb, database, sourceUser, sourcePassword, sourcePort)
+			if err != nil {
+				return err
+			}
+			defer sourceDbConn.Close(ctx)
+
+			targetDbConn, err := postgres.ConnectToPostgres(targetDb, database, targetUser, targetPassword, targetPort)
+			if err != nil {
+				return err
+			}
+			defer targetDbConn.Close(ctx)
+
+			switch method {
+			case "replace":
+				if dbConfig.Driver == "postgres" {
+					if err := postgres.ReplaceMethod(targetDbConn, sourceDbConn, ctx, s); err != nil {
+						return err
+					}
 				}
+			case "sync":
+				if dbConfig.Driver == "postgres" {
+					if err := postgres.SyncMethod(targetDbConn, sourceDbConn, ctx, s); err != nil {
+						return err
+					}
+				}
+			default:
+				return fmt.Errorf("'%v' is not a valid command", method)
 			}
 
 			return nil

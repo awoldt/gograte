@@ -29,37 +29,39 @@ func main() {
 
 			dbConfig := config.DatabaseConfig{
 				Driver:         cmd.String("driver"),
-				Database:       cmd.String("database"),
-				TargetDb:       cmd.String("target-db"),
+				TargetDatabase: cmd.String("target-database"),
+				TargetHost:     cmd.String("target-host"),
 				TargetUser:     cmd.String("target-user"),
 				TargetPassword: cmd.String("target-password"),
 				TargetPort:     cmd.String("target-port"),
 				TargetSchema:   cmd.String("target-schema"),
-				SourceDb:       cmd.String("source-db"),
+				SourceHost:     cmd.String("source-host"),
 				SourceUser:     cmd.String("source-user"),
 				SourcePassword: cmd.String("source-password"),
 				SourcePort:     cmd.String("source-port"),
-				SouceSchema:    cmd.String("source-schema"),
+				SourceSchema:   cmd.String("source-schema"),
+				SourceDatabase: cmd.String("source-database"),
 			}
 
-			database := dbConfig.Database
 			driver := dbConfig.Driver
 
-			targetDb := dbConfig.TargetDb
+			targetDb := dbConfig.TargetDatabase
 			targetUser := dbConfig.TargetUser
 			targetPassword := dbConfig.TargetPassword
 			targetPort := dbConfig.TargetPort
 			targetSchema := dbConfig.TargetSchema
+			targetHost := dbConfig.TargetHost
 
-			sourcedb := dbConfig.SourceDb
+			sourcedb := dbConfig.SourceDatabase
 			sourceUser := dbConfig.SourceUser
 			sourcePassword := dbConfig.SourcePassword
 			sourcePort := dbConfig.SourcePort
-			sourceSchema := dbConfig.SouceSchema
+			sourceSchema := dbConfig.SourceSchema
+			sourceHost := dbConfig.SourceHost
 
 			// ensure all required flags are here
-			if database == "" || targetDb == "" || targetUser == "" || targetPort == "" || sourcedb == "" || sourceUser == "" || sourcePort == "" || driver == "" {
-				return fmt.Errorf("must supply database, database driver, target-db, target-user, target-port, source-db, source-user, and source-port")
+			if driver == "" || targetHost == "" || targetPort == "" || targetDb == "" || targetUser == "" || sourceHost == "" || sourcePort == "" || sourcedb == "" || sourceUser == "" {
+				return fmt.Errorf("missing required flags")
 			}
 
 			if valid := slices.Contains(config.SupportedDatabases, strings.ToLower(driver)); !valid {
@@ -67,13 +69,13 @@ func main() {
 			}
 
 			// connect to both the target and source databases
-			sourceDbConn, err := postgres.ConnectToPostgres(sourcedb, database, sourceUser, sourcePassword, sourcePort, sourceSchema)
+			sourceDbConn, err := postgres.ConnectToPostgres(sourceHost, sourcedb, sourceUser, sourcePassword, sourcePort, sourceSchema)
 			if err != nil {
 				return err
 			}
 			defer sourceDbConn.Close(ctx)
 
-			targetDbConn, err := postgres.ConnectToPostgres(targetDb, database, targetUser, targetPassword, targetPort, targetSchema)
+			targetDbConn, err := postgres.ConnectToPostgres(targetHost, targetDb, targetUser, targetPassword, targetPort, targetSchema)
 			if err != nil {
 				return err
 			}

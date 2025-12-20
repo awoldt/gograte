@@ -16,17 +16,18 @@ The primary command is `replace`, which drops existing tables in the target data
 ```bash
 go run main.go replace \
   --driver postgres \
-  --database <DB_NAME> \
-  --source-db <SRC_HOST> \
+  --source-host <SRC_HOST> \
+  --source-port 5432 \
+  --source-database <SRC_DB_NAME> \
+  --source-schema <SRC_SCHEMA> \
   --source-user <SRC_USER> \
   --source-password <SRC_PWD> \
-  --source-port 5432 \
-  --source-schema <SRC_SCHEMA> \
-  --target-db <TGT_HOST> \
-  --target-user <TGT_USER> \
-  --target-password <TGT_PWD> \
+  --target-host <TGT_HOST> \
   --target-port 5433 \
-  --target-schema <TGT_SCHEMA>
+  --target-database <TGT_DB_NAME> \
+  --target-schema <TGT_SCHEMA> \
+  --target-user <TGT_USER> \
+  --target-password <TGT_PWD>
 ```
 
 ### Required Flags
@@ -34,11 +35,23 @@ go run main.go replace \
 | Flag | Description |
 |------|-------------|
 | `--driver` | Database type (currently only `postgres` is supported). |
-| `--database` | The specific database name to connect to on both hosts. |
-| `--source-*` | Connection details for the **source** (the "template" database). |
-| `--target-*` | Connection details for the **target** (the database to be updated). |
+| `--source-host` | The hostname or IP address of the source database server. |
+| `--source-port` | The port number of the source database server. |
+| `--source-database` | The database name on the source server. |
+| `--source-user` | The username for the source database. |
+| `--target-host` | The hostname or IP address of the target database server. |
+| `--target-port` | The port number of the target database server. |
+| `--target-database` | The database name on the target server. |
+| `--target-user` | The username for the target database. |
 
-> **Note:** Passwords are optional and can be omitted if the database doesn't require them. The `--source-schema` and `--target-schema` flags are also optional and allow you to specify which schema within each database to perform actions on. The 'public' schema is selected by default if not provided.
+### Optional Flags
+
+| Flag | Description |
+|------|-------------|
+| `--source-password` | The password for the source database (omit if not required). |
+| `--target-password` | The password for the target database (omit if not required). |
+| `--source-schema` | The schema within the source database (defaults to `public`). |
+| `--target-schema` | The schema within the target database (defaults to `public`). |
 
 
 ## ⚠️ Warning

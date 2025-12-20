@@ -10,35 +10,39 @@ type StringFlagType struct {
 var SupportedDatabases []string = []string{"postgres"}
 
 var flags []StringFlagType = []StringFlagType{
-	{name: "driver", usage: "Database driver type"},
-	{name: "database", usage: "The database within the specified driver to connect to"},
+	{name: "driver", usage: "Database driver type (postgres, mysql, etc)"},
 
-	{name: "target-db", usage: "Database that will updated"},
-	{name: "target-user", usage: "Database user value"},
-	{name: "target-password", usage: "Database password value"},
-	{name: "target-port", usage: "Database port"},
-	{name: "target-schema", usage: "Which schema within the target database to perform actions on"},
+	// target connection
+	{name: "target-host", usage: "Target database host"},
+	{name: "target-port", usage: "Target database port"},
+	{name: "target-database", usage: "Target database name"},
+	{name: "target-schema", usage: "Target schema within the database"},
+	{name: "target-user", usage: "Target database user"},
+	{name: "target-password", usage: "Target database password"},
 
-	{name: "source-db", usage: "The database that will have the schemas read from (what you want to clone)"},
-	{name: "source-user", usage: "Database user value"},
-	{name: "source-password", usage: "Database password value"},
-	{name: "source-port", usage: "Database port"},
-	{name: "source-schema", usage: "Which schema within the source database to perform actions on"},
+	// source connection
+	{name: "source-host", usage: "Source database host"},
+	{name: "source-port", usage: "Source database port"},
+	{name: "source-database", usage: "Source database name"},
+	{name: "source-schema", usage: "Source schema within the database"},
+	{name: "source-user", usage: "Source database user"},
+	{name: "source-password", usage: "Source database password"},
 }
 
 type DatabaseConfig struct {
 	Driver         string
-	Database       string
-	TargetDb       string
+	TargetHost     string
+	TargetPort     string
+	TargetDatabase string
+	TargetSchema   string
 	TargetUser     string
 	TargetPassword string
-	TargetPort     string
-	TargetSchema   string
-	SourceDb       string
+	SourceHost     string
+	SourcePort     string
+	SourceDatabase string
+	SourceSchema   string
 	SourceUser     string
 	SourcePassword string
-	SourcePort     string
-	SouceSchema    string
 }
 
 func InitiateFlags() []cli.Flag {

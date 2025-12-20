@@ -182,7 +182,7 @@ func getDatabaseTablesSchema(dbConn *pgx.Conn, ctx context.Context, spinner *spi
 	return tables, nil
 }
 
-func ConnectToPostgres(host, database, user, password, port string) (*pgx.Conn, error) {
+func ConnectToPostgres(host, database, user, password, port, schema string) (*pgx.Conn, error) {
 	if host == "" || database == "" || user == "" {
 		return nil, fmt.Errorf("must supply a host, database, and user")
 	}
@@ -204,6 +204,11 @@ func ConnectToPostgres(host, database, user, password, port string) (*pgx.Conn, 
 	conn, err := pgx.ConnectConfig(ctx, connectionConfig)
 	if err != nil {
 		return nil, err
+	}
+
+	// if theres a specific schema to connect to
+	if schema != "" {
+		conn.Exec(ctx, fmt.Sprintf("SET search_path TO %v", schema))
 	}
 
 	return conn, nil

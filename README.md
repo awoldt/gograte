@@ -21,10 +21,12 @@ go run main.go replace \
   --source-user <SRC_USER> \
   --source-password <SRC_PWD> \
   --source-port 5432 \
+  --source-schema <SRC_SCHEMA> \
   --target-db <TGT_HOST> \
   --target-user <TGT_USER> \
   --target-password <TGT_PWD> \
-  --target-port 5433
+  --target-port 5433 \
+  --target-schema <TGT_SCHEMA>
 ```
 
 ### Required Flags
@@ -36,7 +38,7 @@ go run main.go replace \
 | `--source-*` | Connection details for the **source** (the "template" database). |
 | `--target-*` | Connection details for the **target** (the database to be updated). |
 
-> **Note:** Passwords are optional and can be omitted if the database doesn't require them.
+> **Note:** Passwords are optional and can be omitted if the database doesn't require them. The `--source-schema` and `--target-schema` flags are also optional and allow you to specify which schema within each database to perform actions on. The 'public' schema is selected by default if not provided.
 
 
 ## ⚠️ Warning

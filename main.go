@@ -7,6 +7,7 @@ import (
 	"gograte/postgres"
 	"log"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -33,10 +34,12 @@ func main() {
 				TargetUser:     cmd.String("target-user"),
 				TargetPassword: cmd.String("target-password"),
 				TargetPort:     cmd.String("target-port"),
+				TargetSchema:   cmd.String("target-schema"),
 				SourceDb:       cmd.String("source-db"),
 				SourceUser:     cmd.String("source-user"),
 				SourcePassword: cmd.String("source-password"),
 				SourcePort:     cmd.String("source-port"),
+				SouceSchema:    cmd.String("source-schema"),
 			}
 
 			database := dbConfig.Database
@@ -46,37 +49,31 @@ func main() {
 			targetUser := dbConfig.TargetUser
 			targetPassword := dbConfig.TargetPassword
 			targetPort := dbConfig.TargetPort
+			targetSchema := dbConfig.TargetSchema
 
 			sourcedb := dbConfig.SourceDb
 			sourceUser := dbConfig.SourceUser
 			sourcePassword := dbConfig.SourcePassword
 			sourcePort := dbConfig.SourcePort
+			sourceSchema := dbConfig.SouceSchema
 
-			// ensure all strings OTHER THAN PASSWORDS are not empty
+			// ensure all required flags are here
 			if database == "" || targetDb == "" || targetUser == "" || targetPort == "" || sourcedb == "" || sourceUser == "" || sourcePort == "" || driver == "" {
 				return fmt.Errorf("must supply database, database driver, target-db, target-user, target-port, source-db, source-user, and source-port")
 			}
 
-			// make sure this is a valid database driver even before connecting to the databases
-			validDriver := false
-			for _, v := range config.SupportedDatabases {
-				if v == strings.ToLower(driver) {
-					validDriver = true
-					break
-				}
-			}
-			if !validDriver {
+			if valid := slices.Contains(config.SupportedDatabases, strings.ToLower(driver)); !valid {
 				return fmt.Errorf("'%v' is not a supported database driver", driver)
 			}
 
 			// connect to both the target and source databases
-			sourceDbConn, err := postgres.ConnectToPostgres(sourcedb, database, sourceUser, sourcePassword, sourcePort)
+			sourceDbConn, err := postgres.ConnectToPostgres(sourcedb, database, sourceUser, sourcePassword, sourcePort, sourceSchema)
 			if err != nil {
 				return err
 			}
 			defer sourceDbConn.Close(ctx)
 
-			targetDbConn, err := postgres.ConnectToPostgres(targetDb, database, targetUser, targetPassword, targetPort)
+			targetDbConn, err := postgres.ConnectToPostgres(targetDb, database, targetUser, targetPassword, targetPort, targetSchema)
 			if err != nil {
 				return err
 			}

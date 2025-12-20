@@ -17,11 +17,13 @@ var flags []StringFlagType = []StringFlagType{
 	{name: "target-user", usage: "Database user value"},
 	{name: "target-password", usage: "Database password value"},
 	{name: "target-port", usage: "Database port"},
+	{name: "target-schema", usage: "Which schema within the target database to perform actions on"},
 
 	{name: "source-db", usage: "The database that will have the schemas read from (what you want to clone)"},
 	{name: "source-user", usage: "Database user value"},
 	{name: "source-password", usage: "Database password value"},
 	{name: "source-port", usage: "Database port"},
+	{name: "source-schema", usage: "Which schema within the source database to perform actions on"},
 }
 
 type DatabaseConfig struct {
@@ -31,10 +33,12 @@ type DatabaseConfig struct {
 	TargetUser     string
 	TargetPassword string
 	TargetPort     string
+	TargetSchema   string
 	SourceDb       string
 	SourceUser     string
 	SourcePassword string
 	SourcePort     string
+	SouceSchema    string
 }
 
 func InitiateFlags() []cli.Flag {

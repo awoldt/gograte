@@ -84,7 +84,7 @@ func main() {
 			switch method {
 			case "replace":
 				if dbConfig.Driver == "postgres" {
-					if err := postgres.ReplaceMethod(targetDbConn, sourceDbConn, ctx, s); err != nil {
+					if err := postgres.ReplaceMethod(targetDbConn, sourceDbConn, ctx, s, sourceSchema, targetSchema); err != nil {
 						return err
 					}
 				}

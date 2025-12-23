@@ -16,16 +16,16 @@ type TablesQueryResponse struct {
 	Tablename string `db:"tablename"`
 }
 
-type DatabaseTablesColumnsQuery struct {
-	Tablename     string  `db:"table_name"`
-	ColumnName    string  `db:"column_name"`
-	DataType      string  `db:"data_type"`
-	Nullable      string  `db:"is_nullable"`
-	ColumnDefault *string `db:"column_default"`
+type ForeignKey struct {
+	TargetTable  string
+	TargetColumn string
+	SourceColumn string
 }
 
-type DatabaseTableQuery struct {
-	Tablename string `db:"table_name"`
+type Table struct {
+	PrimaryKey  string
+	ForeignKeys []ForeignKey
+	Columns     []Column
 }
 
 type Column struct {
@@ -35,7 +35,7 @@ type Column struct {
 	ColumnDefault *string // can be null
 }
 
-func ReplaceMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, spinner *spinner.Spinner) error {
+func ReplaceMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, spinner *spinner.Spinner, sourceSchema, targetSchema string) error {
 	// will delete the target db and rebuild based on targets schema
 	// ALL DATA WILL BE LOST
 
@@ -67,17 +67,20 @@ func ReplaceMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, sp
 	// WRAP EVERYTHING IN A TRANSACTION TO PREVENT THE WORST!
 	tx, err := targetDbConn.Begin(ctx)
 	if err != nil {
+		fmt.Println("error while beginning transaction")
 		return err
 	}
 	defer tx.Rollback(ctx) // rollback if we dont commit!!!!!!
 
-	sourceTableStructures, err := getDatabaseTablesSchema(sourceDbConn, ctx, spinner)
+	sourceTableStructures, err := getDatabaseTablesSchema(sourceDbConn, ctx, spinner, sourceSchema)
 	if err != nil {
+		fmt.Println("error while getting source table schema")
 		return err
 	}
 
-	targetTableStructures, err := getDatabaseTablesSchema(targetDbConn, ctx, spinner)
+	targetTableStructures, err := getDatabaseTablesSchema(targetDbConn, ctx, spinner, targetSchema)
 	if err != nil {
+		fmt.Println("error while getting target table schema")
 		return err
 	}
 
@@ -87,6 +90,7 @@ func ReplaceMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, sp
 
 		_, err := tx.Exec(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %v CASCADE;", key))
 		if err != nil {
+			fmt.Println("error while deleting target table")
 			return err
 		}
 	}
@@ -95,8 +99,9 @@ func ReplaceMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, sp
 	for key, value := range sourceTableStructures {
 		spinner.Suffix = fmt.Sprintf(" creating table %v", key)
 
-		_, err = tx.Exec(ctx, generateCreateTableQuery(key, value))
+		_, err = tx.Exec(ctx, generateCreateTableQuery(key, value.Columns))
 		if err != nil {
+			fmt.Println("error while creating table")
 			return err
 		}
 	}
@@ -108,39 +113,50 @@ func ReplaceMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, sp
 	return nil
 }
 
-func getDatabaseTablesSchema(dbConn *pgx.Conn, ctx context.Context, spinner *spinner.Spinner) (map[string][]Column, error) {
+func getDatabaseTablesSchema(dbConn *pgx.Conn, ctx context.Context, spinner *spinner.Spinner, schema string) (map[string]Table, error) {
 
 	spinner.Suffix = " loading tables"
 
+	// if no schema is provided, default to public
+	if schema == "" {
+		schema = "public"
+	}
+
 	// first, get only the tables
 	// this will return all tables regardless or not if it has any columns
-	databaseTablesQuery, err := dbConn.Query(ctx, `
+	databaseTablesQuery, err := dbConn.Query(ctx, fmt.Sprintf(`
 		SELECT table_name
 		FROM information_schema.tables
-		WHERE table_schema = 'public'
+		WHERE table_schema = '%v'
 		ORDER BY table_name;
-	`)
+	`, schema))
 
 	if err != nil {
+		fmt.Println("error while querying source databases tables")
 		return nil, fmt.Errorf("%s", "error while querying source databases tables\n"+err.Error())
 	}
 
-	databaseTables, err := pgx.CollectRows(databaseTablesQuery, pgx.RowToAddrOfStructByName[DatabaseTableQuery])
+	databaseTables, err := pgx.CollectRows(databaseTablesQuery, pgx.RowToAddrOfStructByName[struct {
+		Tablename string `db:"table_name"`
+	}])
 	if err != nil {
+		fmt.Println("error while collecting table rows")
 		return nil, err
 	}
 
-	tables := make(map[string][]Column)
+	tables := make(map[string]Table) // table name is key
 	for _, t := range databaseTables {
 		_, exists := tables[t.Tablename]
 
 		if !exists {
-			tables[t.Tablename] = []Column{}
+			tables[t.Tablename] = Table{}
 		}
+
 	}
 
 	spinner.Suffix = " loading columns"
 
+	// now get all the columns
 	databaseTablesColumnsQuery, err := dbConn.Query(ctx, `
 		SELECT
 			table_name,
@@ -157,11 +173,19 @@ func getDatabaseTablesSchema(dbConn *pgx.Conn, ctx context.Context, spinner *spi
 	`)
 
 	if err != nil {
+		fmt.Println("error while querying source databases tables")
 		return nil, fmt.Errorf("%s", "error while querying source databases tables\n"+err.Error())
 	}
 
-	databaseTablesColumns, err := pgx.CollectRows(databaseTablesColumnsQuery, pgx.RowToAddrOfStructByName[DatabaseTablesColumnsQuery])
+	databaseTablesColumns, err := pgx.CollectRows(databaseTablesColumnsQuery, pgx.RowToAddrOfStructByName[struct {
+		Tablename     string  `db:"table_name"`
+		ColumnName    string  `db:"column_name"`
+		DataType      string  `db:"data_type"`
+		Nullable      string  `db:"is_nullable"`
+		ColumnDefault *string `db:"column_default"`
+	}])
 	if err != nil {
+		fmt.Println("error while collecting column rows")
 		return nil, err
 	}
 
@@ -171,12 +195,17 @@ func getDatabaseTablesSchema(dbConn *pgx.Conn, ctx context.Context, spinner *spi
 			isNullable = true
 		}
 
-		tables[dt.Tablename] = append(tables[dt.Tablename], Column{
+		t := tables[dt.Tablename].Columns
+		t = append(t, Column{
 			ColumnName:    dt.ColumnName,
 			ColumnType:    dt.DataType,
 			Nullable:      isNullable,
 			ColumnDefault: dt.ColumnDefault,
 		})
+
+		table := tables[dt.Tablename]
+		table.Columns = t
+		tables[dt.Tablename] = table
 	}
 
 	return tables, nil
@@ -184,31 +213,29 @@ func getDatabaseTablesSchema(dbConn *pgx.Conn, ctx context.Context, spinner *spi
 
 func ConnectToPostgres(host, database, user, password, port, schema string) (*pgx.Conn, error) {
 	if host == "" || database == "" || user == "" {
+		fmt.Println("must supply a host, database, and user")
 		return nil, fmt.Errorf("must supply a host, database, and user")
 	}
 	var connectionString string
 
 	if password == "" {
-		connectionString = fmt.Sprintf("postgres://%v@%v:%v/%v", user, host, port, database)
+		connectionString = fmt.Sprintf("postgres://%v@%v:%v/%v?search_path=%v", user, host, port, database, schema)
 	} else {
 		encodedPwd := url.QueryEscape(password)
-		connectionString = fmt.Sprintf("postgres://%v:%v@%v:%v/%v", user, encodedPwd, host, port, database)
+		connectionString = fmt.Sprintf("postgres://%v:%v@%v:%v/%v?search_path=%v", user, encodedPwd, host, port, database, schema)
 	}
 
 	connectionConfig, err := pgx.ParseConfig(connectionString)
 	if err != nil {
+		fmt.Println("error while parsing connection string")
 		return nil, err
 	}
 
 	ctx := context.Background()
 	conn, err := pgx.ConnectConfig(ctx, connectionConfig)
 	if err != nil {
+		fmt.Println("error while connecting to database")
 		return nil, err
-	}
-
-	// if theres a specific schema to connect to
-	if schema != "" {
-		conn.Exec(ctx, fmt.Sprintf("SET search_path TO %v", schema))
 	}
 
 	return conn, nil

@@ -96,6 +96,8 @@ func ReplaceMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, sp
 	}
 
 	// generate a create table query for every table detected in source db
+	numOfTablesCreated := 0
+	numOfColumnsCreated := 0
 	for key, value := range sourceTableStructures {
 		spinner.Suffix = fmt.Sprintf(" creating table %v", key)
 
@@ -104,12 +106,14 @@ func ReplaceMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, sp
 			fmt.Println("error while creating table")
 			return err
 		}
+		numOfTablesCreated++
+		numOfColumnsCreated += len(value.Columns)
 	}
 
 	tx.Commit(ctx)
 	spinner.Stop()
 
-	fmt.Printf("\nFinished in %v seconds\n", time.Since(startTime))
+	fmt.Printf("\nReplaced %v tables and %v columns in %v seconds\n", numOfTablesCreated, numOfColumnsCreated, time.Since(startTime))
 	return nil
 }
 

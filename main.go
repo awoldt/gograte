@@ -17,7 +17,9 @@ import (
 )
 
 func main() {
-	godotenv.Load() // load these values
+	// flags passed from terminal will override env set flags
+	// you can mix and match the two
+	godotenv.Load() // ignore err
 
 	cmd := &cli.Command{
 		Flags: config.InitiateFlags(),

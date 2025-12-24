@@ -54,6 +54,28 @@ go run main.go replace \
 | `--source-schema` | The schema within the source database (defaults to `public`). |
 | `--target-schema` | The schema within the target database (defaults to `public`). |
 
+### Environment Variables
+
+You can also provide these configurations via a `.env` file in the root of the project. If a flag is provided in the command line, it will override the value in the `.env` file.
+
+Each key must be in uppercase:
+
+| Environment Variable | Description |
+|----------------------|-------------|
+| `DRIVER` | Database type (e.g., `postgres`). |
+| `SOURCE_HOST` | Hostname/IP of the source database. |
+| `SOURCE_PORT` | Port of the source database. |
+| `SOURCE_DATABASE` | Name of the source database. |
+| `SOURCE_USER` | Username for the source database. |
+| `SOURCE_PASSWORD` | Password for the source database. |
+| `SOURCE_SCHEMA` | Schema for the source database. |
+| `TARGET_HOST` | Hostname/IP of the target database. |
+| `TARGET_PORT` | Port of the target database. |
+| `TARGET_DATABASE` | Name of the target database. |
+| `TARGET_USER` | Username for the target database. |
+| `TARGET_PASSWORD` | Password for the target database. |
+| `TARGET_SCHEMA` | Schema for the target database. |
+
 
 ## ⚠️ Warning
 

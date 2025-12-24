@@ -12,10 +12,13 @@ import (
 	"time"
 
 	"github.com/briandowns/spinner"
+	"github.com/joho/godotenv"
 	"github.com/urfave/cli/v3"
 )
 
 func main() {
+	godotenv.Load() // load these values
+
 	cmd := &cli.Command{
 		Flags: config.InitiateFlags(),
 		Action: func(ctx context.Context, cmd *cli.Command) error {

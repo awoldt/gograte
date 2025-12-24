@@ -29,6 +29,27 @@ func main() {
 				return fmt.Errorf("you must add an argument to the gograte command")
 			}
 
+			if method == "init" {
+				// init will create a .env file in the root of the project with all the
+				// needed flag names placed for user to change quickly
+				os.WriteFile(".env", []byte(`DRIVER=
+TARGET_HOST=
+TARGET_PORT=
+TARGET_DATABASE=
+TARGET_USER=
+TARGET_PASSWORD=
+TARGET_SCHEMA=
+SOURCE_HOST=
+SOURCE_PORT=
+SOURCE_DATABASE=
+SOURCE_USER=
+SOURCE_SCHEMA=
+				`), 0644)
+
+				fmt.Println(".env file created in project root")
+				os.Exit(0)
+			}
+
 			s := spinner.New(spinner.CharSets[2], 100*time.Millisecond)
 			defer s.Stop()
 

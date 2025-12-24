@@ -1,16 +1,28 @@
 # gograte - PostgreSQL Schema Migration Tool
 
-`gograte` is a lightweight Go-based CLI tool designed to synchronize PostgreSQL database schemas. It allows you to clone the table structures from a **source** database and apply them to a **target** database.
+`gograte` is a lightweight Go-based CLI tool designed to synchronize PostgreSQL database schemas. It allows you to clone table structures from a **source** database and apply them to a **target** database.
 
 ## Features
 
 - **Schema Mirroring**: Automatically detects tables and columns (types and nullability) from a source database.
 - **Constraints Handling**: Identifies and applies primary keys and foreign keys to maintain data integrity.
-- **Transactional Safety**: Uses database transactions to ensure that changes are only committed if the entire process succeeds.
-
----
+- **Transactional Safety**: Uses database transactions to ensure changes are only committed if the entire process succeeds.
 
 ## Usage
+
+### `init`
+
+The `init` command creates a `.env` file in the project root with the necessary environment variable keys already defined. This allows you to quickly configure your database connections without manually typing out each key.
+
+Flags passed through the terminal will override values set in the environment variables.
+
+```bash
+go run main.go init
+```
+
+### `replace`
+
+⚠️ **Warning**: The `replace` command is **destructive**. It will permanently remove all existing data and tables in the target database before recreating the schema.
 
 The primary command is `replace`, which drops existing tables in the target database and recreates them based on the source schema.
 
@@ -53,30 +65,3 @@ go run main.go replace \
 | `--target-password` | The password for the target database (omit if not required). |
 | `--source-schema` | The schema within the source database (defaults to `public`). |
 | `--target-schema` | The schema within the target database (defaults to `public`). |
-
-### Environment Variables
-
-You can also provide these configurations via a `.env` file in the root of the project. If a flag is provided in the command line, it will override the value in the `.env` file.
-
-Each key must be in uppercase:
-
-| Environment Variable | Description |
-|----------------------|-------------|
-| `DRIVER` | Database type (e.g., `postgres`). |
-| `SOURCE_HOST` | Hostname/IP of the source database. |
-| `SOURCE_PORT` | Port of the source database. |
-| `SOURCE_DATABASE` | Name of the source database. |
-| `SOURCE_USER` | Username for the source database. |
-| `SOURCE_PASSWORD` | Password for the source database. |
-| `SOURCE_SCHEMA` | Schema for the source database. |
-| `TARGET_HOST` | Hostname/IP of the target database. |
-| `TARGET_PORT` | Port of the target database. |
-| `TARGET_DATABASE` | Name of the target database. |
-| `TARGET_USER` | Username for the target database. |
-| `TARGET_PASSWORD` | Password for the target database. |
-| `TARGET_SCHEMA` | Schema for the target database. |
-
-
-## ⚠️ Warning
-
-The `replace` command is **destructive**. It will permanently remove all existing data and tables in the target database before recreating the schema. Always ensure you have backups before running this tool against production environments.

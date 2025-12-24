@@ -17,9 +17,9 @@ type TablesQueryResponse struct {
 }
 
 type ForeignKey struct {
-	TargetTable  string
-	TargetColumn string
-	SourceColumn string
+	ForeignColumnName string
+	ForeignTableName  string
+	SourceColumn      string
 }
 
 type Table struct {
@@ -72,13 +72,13 @@ func ReplaceMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, sp
 	}
 	defer tx.Rollback(ctx) // rollback if we dont commit!!!!!!
 
-	sourceTableStructures, err := getDatabaseTablesSchema(sourceDbConn, ctx, spinner, sourceSchema)
+	sourceTableStructures, err := getSchemaDetails(sourceDbConn, ctx, spinner, sourceSchema, true)
 	if err != nil {
 		fmt.Println("error while getting source table schema")
 		return err
 	}
 
-	targetTableStructures, err := getDatabaseTablesSchema(targetDbConn, ctx, spinner, targetSchema)
+	targetTableStructures, err := getSchemaDetails(targetDbConn, ctx, spinner, targetSchema, false)
 	if err != nil {
 		fmt.Println("error while getting target table schema")
 		return err
@@ -96,6 +96,7 @@ func ReplaceMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, sp
 	}
 
 	// generate a create table query for every table detected in source db
+	// add all columns with tables as well
 	numOfTablesCreated := 0
 	numOfColumnsCreated := 0
 	for key, value := range sourceTableStructures {
@@ -110,6 +111,38 @@ func ReplaceMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, sp
 		numOfColumnsCreated += len(value.Columns)
 	}
 
+	// INSERT ALL PKS BEFORE FKS BELOW!!!!!!!!!!!!!!
+	for table, tableDetails := range sourceTableStructures {
+		spinner.Suffix = " adding constraints to table " + table
+
+		// insert pk
+		if tableDetails.PrimaryKey != "" {
+			_, err = tx.Exec(ctx, fmt.Sprintf("ALTER TABLE %s ADD PRIMARY KEY (%s);", table, tableDetails.PrimaryKey))
+			if err != nil {
+				fmt.Println("error while adding primary key to table " + table + " with value " + tableDetails.PrimaryKey)
+				return err
+			}
+		}
+
+	}
+
+	// insert all foreign keys
+	for table, tableDetails := range sourceTableStructures {
+		spinner.Suffix = " adding constraints to table " + table
+		for _, fk := range tableDetails.ForeignKeys {
+			// insert fk
+			_, err = tx.Exec(ctx, fmt.Sprintf(`
+			ALTER TABLE %s
+			ADD FOREIGN KEY (%s)
+			REFERENCES %s(%s);
+		`, table, fk.SourceColumn, fk.ForeignTableName, fk.ForeignColumnName))
+			if err != nil {
+				fmt.Printf("error while adding fk key to table %s: column %s referencing %s(%s)\n", table, fk.SourceColumn, fk.ForeignTableName, fk.ForeignColumnName)
+				return err
+			}
+		}
+	}
+
 	tx.Commit(ctx)
 	spinner.Stop()
 
@@ -117,7 +150,43 @@ func ReplaceMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, sp
 	return nil
 }
 
-func getDatabaseTablesSchema(dbConn *pgx.Conn, ctx context.Context, spinner *spinner.Spinner, schema string) (map[string]Table, error) {
+func ConnectToPostgres(host, database, user, password, port, schema string) (*pgx.Conn, error) {
+	if host == "" || database == "" || user == "" {
+		fmt.Println("must supply a host, database, and user")
+		return nil, fmt.Errorf("must supply a host, database, and user")
+	}
+	var connectionString string
+
+	if password == "" {
+		connectionString = fmt.Sprintf("postgres://%v@%v:%v/%v?search_path=%v", user, host, port, database, schema)
+	} else {
+		encodedPwd := url.QueryEscape(password)
+		connectionString = fmt.Sprintf("postgres://%v:%v@%v:%v/%v?search_path=%v", user, encodedPwd, host, port, database, schema)
+	}
+
+	connectionConfig, err := pgx.ParseConfig(connectionString)
+	if err != nil {
+		fmt.Println("error while parsing connection string")
+		return nil, err
+	}
+
+	ctx := context.Background()
+	conn, err := pgx.ConnectConfig(ctx, connectionConfig)
+	if err != nil {
+		fmt.Println("error while connecting to database")
+		return nil, err
+	}
+
+	return conn, nil
+}
+
+func getSchemaDetails(dbConn *pgx.Conn, ctx context.Context, spinner *spinner.Spinner, schema string, getConstraints bool) (map[string]Table, error) {
+	/*
+		this function is fukin insane...
+		basically get all the tables inside this schema along with their constraints
+	*/
+
+	tables := make(map[string]Table) // table name is key
 
 	spinner.Suffix = " loading tables"
 
@@ -148,7 +217,6 @@ func getDatabaseTablesSchema(dbConn *pgx.Conn, ctx context.Context, spinner *spi
 		return nil, err
 	}
 
-	tables := make(map[string]Table) // table name is key
 	for _, t := range databaseTables {
 		_, exists := tables[t.Tablename]
 
@@ -172,9 +240,9 @@ func getDatabaseTablesSchema(dbConn *pgx.Conn, ctx context.Context, spinner *spi
 			is_nullable,
 			column_default
 		FROM information_schema.columns
-		WHERE table_schema = 'public'
+		WHERE table_schema = $1
 		ORDER BY table_name, ordinal_position;
-	`)
+	`, schema)
 
 	if err != nil {
 		fmt.Println("error while querying source databases tables")
@@ -208,41 +276,71 @@ func getDatabaseTablesSchema(dbConn *pgx.Conn, ctx context.Context, spinner *spi
 		})
 
 		table := tables[dt.Tablename]
+
 		table.Columns = t
 		tables[dt.Tablename] = table
 	}
 
+	// now get the constraints
+	// we only need to get constraints from source db AND if the user wants to put in their target tables
+	if getConstraints {
+		schemaConstraintsQuery, err := dbConn.Query(ctx, `
+					SELECT
+					tc.table_name,
+					tc.constraint_name,
+					tc.constraint_type,
+					kcu.column_name,
+					ccu.table_name  AS foreign_table_name,
+					ccu.column_name AS foreign_column_name
+					FROM information_schema.table_constraints tc
+					LEFT JOIN information_schema.key_column_usage kcu
+					ON tc.constraint_name = kcu.constraint_name
+					AND tc.table_schema   = kcu.table_schema
+					LEFT JOIN information_schema.constraint_column_usage ccu
+					ON tc.constraint_name = ccu.constraint_name
+					AND tc.table_schema   = ccu.table_schema
+					WHERE tc.table_schema = $1
+					AND tc.constraint_type IN ('PRIMARY KEY', 'FOREIGN KEY')
+					ORDER BY tc.table_name, tc.constraint_type, kcu.ordinal_position;
+`, schema)
+
+		if err != nil {
+			fmt.Println("error while querying constraint quries")
+			return nil, err
+		}
+
+		schemaConstraints, err := pgx.CollectRows(schemaConstraintsQuery, pgx.RowToAddrOfStructByName[struct {
+			Tablename         string `db:"table_name"`
+			ConstraintName    string `db:"constraint_name"`
+			ConstraintType    string `db:"constraint_type"`
+			SourceColumnName  string `db:"column_name"`
+			ForeignColumnName string `db:"foreign_column_name"`
+			ForeignTableName  string `db:"foreign_table_name"`
+		}])
+
+		for _, v := range schemaConstraints {
+
+			tableDetails := tables[v.Tablename]
+
+			// pk
+			if v.ConstraintType == "PRIMARY KEY" {
+				tableDetails.PrimaryKey = v.SourceColumnName
+				tables[v.Tablename] = tableDetails
+			}
+
+			// foreign key
+			if v.ConstraintType == "FOREIGN KEY" {
+				tableDetails.ForeignKeys = append(tableDetails.ForeignKeys, ForeignKey{
+					ForeignTableName:  v.ForeignTableName,
+					ForeignColumnName: v.ForeignColumnName,
+					SourceColumn:      v.SourceColumnName,
+				})
+				tables[v.Tablename] = tableDetails
+			}
+		}
+	}
+
 	return tables, nil
-}
-
-func ConnectToPostgres(host, database, user, password, port, schema string) (*pgx.Conn, error) {
-	if host == "" || database == "" || user == "" {
-		fmt.Println("must supply a host, database, and user")
-		return nil, fmt.Errorf("must supply a host, database, and user")
-	}
-	var connectionString string
-
-	if password == "" {
-		connectionString = fmt.Sprintf("postgres://%v@%v:%v/%v?search_path=%v", user, host, port, database, schema)
-	} else {
-		encodedPwd := url.QueryEscape(password)
-		connectionString = fmt.Sprintf("postgres://%v:%v@%v:%v/%v?search_path=%v", user, encodedPwd, host, port, database, schema)
-	}
-
-	connectionConfig, err := pgx.ParseConfig(connectionString)
-	if err != nil {
-		fmt.Println("error while parsing connection string")
-		return nil, err
-	}
-
-	ctx := context.Background()
-	conn, err := pgx.ConnectConfig(ctx, connectionConfig)
-	if err != nil {
-		fmt.Println("error while connecting to database")
-		return nil, err
-	}
-
-	return conn, nil
 }
 
 func generateCreateTableQuery(table string, columns []Column) string {

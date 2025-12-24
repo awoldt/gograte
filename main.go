@@ -26,26 +26,18 @@ func main() {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			method := strings.ToLower(cmd.Args().Get(0))
 			if method == "" {
-				return fmt.Errorf("you must add an argument to the gograte command")
+				return fmt.Errorf("no command provided")
 			}
 
 			if method == "init" {
 				// init will create a .env file in the root of the project with all the
 				// needed flag names placed for user to change quickly
-				os.WriteFile(".env", []byte(`DRIVER=
-TARGET_HOST=
-TARGET_PORT=
-TARGET_DATABASE=
-TARGET_USER=
-TARGET_PASSWORD=
-TARGET_SCHEMA=
-SOURCE_HOST=
-SOURCE_PORT=
-SOURCE_DATABASE=
-SOURCE_USER=
-SOURCE_SCHEMA=
-				`), 0644)
+				var data strings.Builder
+				for _, v := range config.Flags {
+					data.WriteString(fmt.Sprintf("%s=\n", v.EnvVar))
+				}
 
+				os.WriteFile(".env", []byte(data.String()), 0644)
 				fmt.Println(".env file created in project root")
 				os.Exit(0)
 			}

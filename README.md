@@ -5,6 +5,7 @@
 ## Features
 
 - **Schema Mirroring**: Automatically detects tables and columns (types and nullability) from a source database.
+- **Constraints Handling**: Identifies and applies primary keys and foreign keys to maintain data integrity.
 - **Transactional Safety**: Uses database transactions to ensure that changes are only committed if the entire process succeeds.
 
 ---

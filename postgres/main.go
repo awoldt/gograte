@@ -41,7 +41,10 @@ func ReplaceMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, sp
 
 	var yesno string
 	for {
+		fmt.Println("source: " + sourceDbConn.Config().Host)
+		fmt.Println("target: " + targetDbConn.Config().Host)
 		fmt.Print("replacing a database is permanent and will remove all data. are you sure? (y/n): ")
+
 		fmt.Scan(&yesno)
 
 		answer := strings.TrimSpace(strings.ToLower(yesno))
@@ -169,6 +172,8 @@ func ConnectToPostgres(host, database, user, password, port, schema string) (*pg
 		fmt.Println("error while parsing connection string")
 		return nil, err
 	}
+
+	connectionConfig.ConnectTimeout = 10 * time.Second // 10 second timeout
 
 	ctx := context.Background()
 	conn, err := pgx.ConnectConfig(ctx, connectionConfig)

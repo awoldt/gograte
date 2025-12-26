@@ -35,6 +35,100 @@ type Column struct {
 	ColumnDefault *string // can be null
 }
 
+func DiffMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, spinner *spinner.Spinner, targetSchema, sourceSchema string) error {
+	/*
+		showcases between the source and target table:
+		- new tables
+		- removed tables
+		- new columns
+		- removed columns
+	*/
+
+	spinner.Start()
+	spinner.Suffix = " getting diff"
+
+	var newTables []string
+	var removedTables []string
+
+	sourceTablesQuery, err := sourceDbConn.Query(ctx, `SELECT table_name
+		FROM information_schema.tables
+		WHERE table_schema = $1`, sourceSchema)
+
+	if err != nil {
+		return fmt.Errorf("%s", "error while querying source databases tables\n"+err.Error())
+	}
+	sourcetables, err := pgx.CollectRows(sourceTablesQuery, pgx.RowToAddrOfStructByName[struct {
+		Tablename string `db:"table_name"`
+	}])
+
+	targetTableQuery, err := targetDbConn.Query(ctx, `SELECT table_name
+	FROM information_schema.tables
+	WHERE table_schema = $1`, targetSchema)
+
+	if err != nil {
+		return fmt.Errorf("%s", "error while querying target databases tables\n"+err.Error())
+	}
+	targetTables, err := pgx.CollectRows(targetTableQuery, pgx.RowToAddrOfStructByName[struct {
+		Tablename string `db:"table_name"`
+	}])
+
+	// new tables
+	// tables that exist in the source but not the target
+	for _, sourceTable := range sourcetables {
+		new := true
+
+		for _, targetTable := range targetTables {
+			if sourceTable.Tablename == targetTable.Tablename {
+				new = false
+				break
+			}
+
+		}
+
+		if new {
+			newTables = append(newTables, sourceTable.Tablename)
+		}
+
+	}
+
+	// removed tables
+	for _, targetTable := range targetTables {
+		removed := true
+		for _, sourceTable := range sourcetables {
+			if targetTable.Tablename == sourceTable.Tablename {
+				removed = false
+				break
+			}
+		}
+
+		if removed {
+			removedTables = append(removedTables, targetTable.Tablename)
+		}
+	}
+
+	spinner.Stop()
+
+	if len(newTables) > 0 {
+		fmt.Printf("found %d new tables to be created:\n", len(newTables))
+		for _, table := range newTables {
+			fmt.Printf("\t + %s\n", table)
+		}
+	} else {
+		fmt.Print("no new tables found.")
+	}
+
+	if len(removedTables) > 0 {
+		fmt.Printf("found %d tables to be removed:\n", len(removedTables))
+		for _, table := range removedTables {
+			fmt.Printf("\t - %s\n", table)
+		}
+	} else {
+		fmt.Print(" no tables to be removed.")
+	}
+
+	return nil
+}
+
 func ReplaceMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, spinner *spinner.Spinner, sourceSchema, targetSchema string) error {
 	// will delete the target db and rebuild based on targets schema
 	// ALL DATA WILL BE LOST

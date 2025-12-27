@@ -44,65 +44,107 @@ func DiffMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, spinn
 		- removed columns
 	*/
 
+	query := `
+		SELECT
+		t.table_name,
+		c.column_name
+		FROM information_schema.tables t
+		LEFT JOIN information_schema.columns c
+		ON c.table_schema = t.table_schema
+		AND c.table_name   = t.table_name
+		WHERE t.table_schema =  $1
+		ORDER BY t.table_name, c.ordinal_position;
+	`
+
 	spinner.Start()
 	spinner.Suffix = " getting diff"
 
-	var newTables []string
-	var removedTables []string
-
-	sourceTablesQuery, err := sourceDbConn.Query(ctx, `SELECT table_name
-		FROM information_schema.tables
-		WHERE table_schema = $1`, sourceSchema)
+	sourceTablesQuery, err := sourceDbConn.Query(ctx, query, sourceSchema)
 
 	if err != nil {
 		return fmt.Errorf("%s", "error while querying source databases tables\n"+err.Error())
 	}
 	sourcetables, err := pgx.CollectRows(sourceTablesQuery, pgx.RowToAddrOfStructByName[struct {
-		Tablename string `db:"table_name"`
+		Tablename  string  `db:"table_name"`
+		ColumnName *string `db:"column_name"`
 	}])
 
-	targetTableQuery, err := targetDbConn.Query(ctx, `SELECT table_name
-	FROM information_schema.tables
-	WHERE table_schema = $1`, targetSchema)
+	targetTableQuery, err := targetDbConn.Query(ctx, query, targetSchema)
 
 	if err != nil {
 		return fmt.Errorf("%s", "error while querying target databases tables\n"+err.Error())
 	}
 	targetTables, err := pgx.CollectRows(targetTableQuery, pgx.RowToAddrOfStructByName[struct {
-		Tablename string `db:"table_name"`
+		Tablename  string  `db:"table_name"`
+		ColumnName *string `db:"column_name"`
 	}])
 
-	// new tables
-	// tables that exist in the source but not the target
-	for _, sourceTable := range sourcetables {
-		new := true
-
-		for _, targetTable := range targetTables {
-			if sourceTable.Tablename == targetTable.Tablename {
-				new = false
-				break
-			}
-
+	// MAP STRUCTURE - KEY: table VALUE: all columns for that table
+	targetDetails := make(map[string][]string)
+	sourceDetails := make(map[string][]string)
+	for _, t := range sourcetables {
+		_, exists := sourceDetails[t.Tablename]
+		if !exists {
+			sourceDetails[t.Tablename] = []string{}
 		}
 
-		if new {
-			newTables = append(newTables, sourceTable.Tablename)
+		if t.ColumnName != nil {
+			cols := sourceDetails[t.Tablename]
+			cols = append(cols, *t.ColumnName)
+			sourceDetails[t.Tablename] = cols
+		}
+	}
+	for _, t := range targetTables {
+		_, exists := targetDetails[t.Tablename]
+		if !exists {
+			targetDetails[t.Tablename] = []string{}
 		}
 
+		if t.ColumnName != nil {
+			cols := targetDetails[t.Tablename]
+			cols = append(cols, *t.ColumnName)
+			targetDetails[t.Tablename] = cols
+		}
 	}
 
-	// removed tables
-	for _, targetTable := range targetTables {
-		removed := true
-		for _, sourceTable := range sourcetables {
-			if targetTable.Tablename == sourceTable.Tablename {
-				removed = false
+	var newTables []string
+	var removedTables []string
+	newColumns := make(map[string][]string)
+	removedColumns := make(map[string][]string)
+
+	// new tables / columns
+	// (exists in source but not target)
+	for sourceTable, sourceCols := range sourceDetails {
+		newTable := true
+
+		for targetTable, _ := range targetDetails {
+			if targetTable == sourceTable {
+				newTable = false
 				break
 			}
 		}
 
-		if removed {
-			removedTables = append(removedTables, targetTable.Tablename)
+		if newTable {
+			newTables = append(newTables, sourceTable)
+			newColumns[sourceTable] = sourceCols // if this is a new table, ez to assume all columns are new also
+		}
+	}
+
+	// removed tables / columns
+	// (exists in target but not source)
+	for targetTable, targetCols := range targetDetails {
+		removedTable := true
+
+		for sourceTable, _ := range sourceDetails {
+			if sourceTable == targetTable {
+				removedTable = false
+				break
+			}
+		}
+
+		if removedTable {
+			removedTables = append(removedTables, targetTable)
+			removedColumns[targetTable] = targetCols // if this is a removed table, ez to assumc all columns are removed also
 		}
 	}
 

@@ -20,6 +20,10 @@ Flags passed through the terminal will override values set in the environment va
 go run main.go init
 ```
 
+### `diff`
+
+The `diff` command compares the schemas of the source and target databases and highlights the differences. It identifies new tables, deleted tables, and column changes within existing tables. Unlike `replace`, this command is **non-destructive** and only displays the differences.
+
 ### `replace`
 
 ⚠️ **Warning**: The `replace` command is **destructive**. It will permanently remove all existing data and tables in the target database before recreating the schema.

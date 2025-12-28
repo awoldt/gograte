@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -42,6 +43,7 @@ func DiffMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, spinn
 		- removed tables
 		- new columns
 		- removed columns
+		- changes in existing tables (new and removed cols)
 	*/
 
 	query := `
@@ -109,12 +111,11 @@ func DiffMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, spinn
 
 	var newTables []string
 	var removedTables []string
-	newColumns := make(map[string][]string)
-	removedColumns := make(map[string][]string)
+	var existingTables []string
 
 	// new tables / columns
 	// (exists in source but not target)
-	for sourceTable, sourceCols := range sourceDetails {
+	for sourceTable, _ := range sourceDetails {
 		newTable := true
 
 		for targetTable, _ := range targetDetails {
@@ -126,13 +127,12 @@ func DiffMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, spinn
 
 		if newTable {
 			newTables = append(newTables, sourceTable)
-			newColumns[sourceTable] = sourceCols // if this is a new table, ez to assume all columns are new also
 		}
 	}
 
 	// removed tables / columns
 	// (exists in target but not source)
-	for targetTable, targetCols := range targetDetails {
+	for targetTable, _ := range targetDetails {
 		removedTable := true
 
 		for sourceTable, _ := range sourceDetails {
@@ -144,28 +144,99 @@ func DiffMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, spinn
 
 		if removedTable {
 			removedTables = append(removedTables, targetTable)
-			removedColumns[targetTable] = targetCols // if this is a removed table, ez to assumc all columns are removed also
+		}
+	}
+
+	// existing tables
+	// (tables that are not in either newTables or removedTables slices)
+	for table := range sourceDetails {
+		isExistingTable := true
+
+		for _, t := range append(newTables, removedTables...) {
+			if t == table {
+				isExistingTable = false
+				break
+			}
+		}
+
+		if isExistingTable {
+			existingTables = append(existingTables, table)
+		}
+	}
+
+	// find new and removed columns for each existing table
+	existingTableDiffs := make(map[string]struct {
+		addedCols   []string
+		removedCols []string
+	})
+
+	for _, table := range existingTables {
+		existingTableDiffs[table] = struct {
+			addedCols   []string
+			removedCols []string
+		}{}
+
+		// addedCols (exists in source but not target)
+		for _, col := range sourceDetails[table] {
+			if !slices.Contains(targetDetails[table], col) {
+				diff := existingTableDiffs[table]
+				diff.addedCols = append(diff.addedCols, col)
+				existingTableDiffs[table] = diff
+			}
+		}
+		// removedCols (exists in target but not source)
+		for _, col := range targetDetails[table] {
+			if !slices.Contains(sourceDetails[table], col) {
+				diff := existingTableDiffs[table]
+				diff.removedCols = append(diff.removedCols, col)
+				existingTableDiffs[table] = diff
+			}
 		}
 	}
 
 	spinner.Stop()
 
+	fmt.Printf("new tables (%v):\n", len(newTables))
 	if len(newTables) > 0 {
-		fmt.Printf("found %d new tables to be created:\n", len(newTables))
 		for _, table := range newTables {
-			fmt.Printf("\t + %s\n", table)
+			fmt.Printf("\t+ %s\n", table)
 		}
 	} else {
-		fmt.Print("no new tables found.")
+		fmt.Println("  none")
 	}
 
+	fmt.Printf("\ndeleted tables (%v):\n", len(removedTables))
 	if len(removedTables) > 0 {
-		fmt.Printf("found %d tables to be removed:\n", len(removedTables))
 		for _, table := range removedTables {
-			fmt.Printf("\t - %s\n", table)
+			fmt.Printf("\t- %s\n", table)
 		}
 	} else {
-		fmt.Print(" no tables to be removed.")
+		fmt.Println("  none")
+	}
+
+	numOfExistingTableColChanges := 0
+	for _, v := range existingTableDiffs {
+		numOfExistingTableColChanges += len(v.addedCols)
+		numOfExistingTableColChanges += len(v.removedCols)
+	}
+
+	fmt.Printf("\ncolumn changes (%v):\n", numOfExistingTableColChanges)
+	hasColumnChanges := false
+	for _, table := range existingTables {
+		diff := existingTableDiffs[table]
+		if len(diff.addedCols) > 0 || len(diff.removedCols) > 0 {
+			hasColumnChanges = true
+			fmt.Printf("  %s:\n", table)
+			for _, col := range diff.addedCols {
+				fmt.Printf("    + %s\n", col)
+			}
+			for _, col := range diff.removedCols {
+				fmt.Printf("    - %s\n", col)
+			}
+		}
+	}
+	if !hasColumnChanges {
+		fmt.Println("  none")
 	}
 
 	return nil

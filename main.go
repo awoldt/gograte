@@ -72,6 +72,13 @@ func main() {
 					}
 				}
 
+			case "diff":
+				if dbConfig.Driver == "postgres" {
+					if err := postgres.DiffMethod(targetDbConn, sourceDbConn, ctx, s, dbConfig.TargetSchema, dbConfig.SourceSchema); err != nil {
+						return err
+					}
+				}
+
 			default:
 				return fmt.Errorf("'%v' is not a valid command", method)
 			}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -33,6 +34,212 @@ type Column struct {
 	ColumnType    string
 	Nullable      bool
 	ColumnDefault *string // can be null
+}
+
+func DiffMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, spinner *spinner.Spinner, targetSchema, sourceSchema string) error {
+	/*
+		showcases between the source and target table:
+		- new tables
+		- removed tables
+		- new columns
+		- removed columns
+		- changes in existing tables (new and removed cols)
+	*/
+
+	query := `
+		SELECT
+		t.table_name,
+		c.column_name
+		FROM information_schema.tables t
+		LEFT JOIN information_schema.columns c
+		ON c.table_schema = t.table_schema
+		AND c.table_name   = t.table_name
+		WHERE t.table_schema =  $1
+		ORDER BY t.table_name, c.ordinal_position;
+	`
+
+	spinner.Start()
+	spinner.Suffix = " getting diff"
+
+	sourceTablesQuery, err := sourceDbConn.Query(ctx, query, sourceSchema)
+
+	if err != nil {
+		return fmt.Errorf("%s", "error while querying source databases tables\n"+err.Error())
+	}
+	sourcetables, err := pgx.CollectRows(sourceTablesQuery, pgx.RowToAddrOfStructByName[struct {
+		Tablename  string  `db:"table_name"`
+		ColumnName *string `db:"column_name"`
+	}])
+
+	targetTableQuery, err := targetDbConn.Query(ctx, query, targetSchema)
+
+	if err != nil {
+		return fmt.Errorf("%s", "error while querying target databases tables\n"+err.Error())
+	}
+	targetTables, err := pgx.CollectRows(targetTableQuery, pgx.RowToAddrOfStructByName[struct {
+		Tablename  string  `db:"table_name"`
+		ColumnName *string `db:"column_name"`
+	}])
+
+	// MAP STRUCTURE - KEY: table VALUE: all columns for that table
+	targetDetails := make(map[string][]string)
+	sourceDetails := make(map[string][]string)
+	for _, t := range sourcetables {
+		_, exists := sourceDetails[t.Tablename]
+		if !exists {
+			sourceDetails[t.Tablename] = []string{}
+		}
+
+		if t.ColumnName != nil {
+			cols := sourceDetails[t.Tablename]
+			cols = append(cols, *t.ColumnName)
+			sourceDetails[t.Tablename] = cols
+		}
+	}
+	for _, t := range targetTables {
+		_, exists := targetDetails[t.Tablename]
+		if !exists {
+			targetDetails[t.Tablename] = []string{}
+		}
+
+		if t.ColumnName != nil {
+			cols := targetDetails[t.Tablename]
+			cols = append(cols, *t.ColumnName)
+			targetDetails[t.Tablename] = cols
+		}
+	}
+
+	var newTables []string
+	var removedTables []string
+	var existingTables []string
+
+	// new tables / columns
+	// (exists in source but not target)
+	for sourceTable, _ := range sourceDetails {
+		newTable := true
+
+		for targetTable, _ := range targetDetails {
+			if targetTable == sourceTable {
+				newTable = false
+				break
+			}
+		}
+
+		if newTable {
+			newTables = append(newTables, sourceTable)
+		}
+	}
+
+	// removed tables / columns
+	// (exists in target but not source)
+	for targetTable, _ := range targetDetails {
+		removedTable := true
+
+		for sourceTable, _ := range sourceDetails {
+			if sourceTable == targetTable {
+				removedTable = false
+				break
+			}
+		}
+
+		if removedTable {
+			removedTables = append(removedTables, targetTable)
+		}
+	}
+
+	// existing tables
+	// (tables that are not in either newTables or removedTables slices)
+	for table := range sourceDetails {
+		isExistingTable := true
+
+		for _, t := range append(newTables, removedTables...) {
+			if t == table {
+				isExistingTable = false
+				break
+			}
+		}
+
+		if isExistingTable {
+			existingTables = append(existingTables, table)
+		}
+	}
+
+	// find new and removed columns for each existing table
+	existingTableDiffs := make(map[string]struct {
+		addedCols   []string
+		removedCols []string
+	})
+
+	for _, table := range existingTables {
+		existingTableDiffs[table] = struct {
+			addedCols   []string
+			removedCols []string
+		}{}
+
+		// addedCols (exists in source but not target)
+		for _, col := range sourceDetails[table] {
+			if !slices.Contains(targetDetails[table], col) {
+				diff := existingTableDiffs[table]
+				diff.addedCols = append(diff.addedCols, col)
+				existingTableDiffs[table] = diff
+			}
+		}
+		// removedCols (exists in target but not source)
+		for _, col := range targetDetails[table] {
+			if !slices.Contains(sourceDetails[table], col) {
+				diff := existingTableDiffs[table]
+				diff.removedCols = append(diff.removedCols, col)
+				existingTableDiffs[table] = diff
+			}
+		}
+	}
+
+	spinner.Stop()
+
+	fmt.Printf("new tables (%v):\n", len(newTables))
+	if len(newTables) > 0 {
+		for _, table := range newTables {
+			fmt.Printf("\t+ %s\n", table)
+		}
+	} else {
+		fmt.Println("  none")
+	}
+
+	fmt.Printf("\ndeleted tables (%v):\n", len(removedTables))
+	if len(removedTables) > 0 {
+		for _, table := range removedTables {
+			fmt.Printf("\t- %s\n", table)
+		}
+	} else {
+		fmt.Println("  none")
+	}
+
+	numOfExistingTableColChanges := 0
+	for _, v := range existingTableDiffs {
+		numOfExistingTableColChanges += len(v.addedCols)
+		numOfExistingTableColChanges += len(v.removedCols)
+	}
+
+	fmt.Printf("\ncolumn changes (%v):\n", numOfExistingTableColChanges)
+	hasColumnChanges := false
+	for _, table := range existingTables {
+		diff := existingTableDiffs[table]
+		if len(diff.addedCols) > 0 || len(diff.removedCols) > 0 {
+			hasColumnChanges = true
+			fmt.Printf("  %s:\n", table)
+			for _, col := range diff.addedCols {
+				fmt.Printf("    + %s\n", col)
+			}
+			for _, col := range diff.removedCols {
+				fmt.Printf("    - %s\n", col)
+			}
+		}
+	}
+	if !hasColumnChanges {
+		fmt.Println("  none")
+	}
+
+	return nil
 }
 
 func ReplaceMethod(targetDbConn, sourceDbConn *pgx.Conn, ctx context.Context, spinner *spinner.Spinner, sourceSchema, targetSchema string) error {

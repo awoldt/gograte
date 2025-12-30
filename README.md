@@ -16,10 +16,6 @@ The `init` command creates a `.env` file in the project root with the necessary 
 
 Flags passed through the terminal will override values set in the environment variables.
 
-```bash
-go run main.go init
-```
-
 ### `diff`
 
 The `diff` command compares the schemas of the source and target databases and highlights the differences. It identifies new tables, deleted tables, and column changes within existing tables. Unlike `replace`, this command is **non-destructive** and only displays the differences.
